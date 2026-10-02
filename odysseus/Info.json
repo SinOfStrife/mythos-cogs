@@ -1,0 +1,12 @@
+{
+    "author": ["Strife"],
+    "install_msg": "Thanks for installing Odysseus!",
+    "name": "Odysseus",
+    "short": "Responds to Odysseus with family members.",
+    "description": "Listens for the name Odysseus and replies with Penelope or TELEMACHUS!.",
+    "tags": ["fun", "mythology", "easter-egg"],
+    "requirements": [],
+    "hidden": false,
+    "type": "COG",
+    "end_user_data_statement": "This cog does not persistently store any personal or user data."
+}
