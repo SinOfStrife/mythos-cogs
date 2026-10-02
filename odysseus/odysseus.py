@@ -15,7 +15,8 @@ class Odysseus(commands.Cog):
         # Set default server settings
         default_guild = {
             "enabled": True,
-            "target_channel": None,  # None means active everywhere
+            "allowed_channels": [],  # Empty list means active everywhere (unless blacklisted)
+            "blacklisted_channels": [], # List of blocked channels
             "penelope_weight": 75,   # Default 75% Penelope
             "telemachus_weight": 25, # Default 25% Telemachus
         }
@@ -26,14 +27,21 @@ class Odysseus(commands.Cog):
         if message.author.bot or not message.guild:
             return
 
-        # Check if the feature is enabled for this server
         guild = message.guild
+        # Check if the feature is enabled for this server
         if not await self.config.guild(guild).enabled():
             return
 
-        # Check if a specific channel is set
-        target_channel_id = await self.config.guild(guild).target_channel()
-        if target_channel_id and message.channel.id != target_channel_id:
+        channel_id = message.channel.id
+
+        # 1. Check if channel is blacklisted
+        blacklisted = await self.config.guild(guild).blacklisted_channels()
+        if channel_id in blacklisted:
+            return
+
+        # 2. Check if a whitelist (allowed channels) is active
+        allowed = await self.config.guild(guild).allowed_channels()
+        if allowed and channel_id not in allowed:
             return
 
         # Check if "odysseus" is in the message (case-insensitive)
@@ -74,16 +82,6 @@ class Odysseus(commands.Cog):
         status = "enabled" if new_state else "disabled"
         await ctx.send(f"✅ Odysseus responses are now **{status}** for this server.")
 
-    @odyssettings.command(name="channel")
-    async def odyssettings_channel(self, ctx: commands.Context, channel: discord.TextChannel = None):
-        """Restrict responses to a specific channel (leave blank for all channels)."""
-        if channel is None:
-            await self.config.guild(ctx.guild).target_channel.set(None)
-            await ctx.send("✅ Odysseus responses are now active in **all channels**.")
-        else:
-            await self.config.guild(ctx.guild).target_channel.set(channel.id)
-            await ctx.send(f"✅ Odysseus responses are now restricted to {channel.mention}.")
-
     @odyssettings.command(name="split")
     async def odyssettings_split(self, ctx: commands.Context, penelope: int, telemachus: int):
         """Set custom percentage split for Penelope and Telemachus (e.g., [p]odyssettings split 80 20)."""
@@ -94,4 +92,55 @@ class Odysseus(commands.Cog):
         await self.config.guild(ctx.guild).telemachus_weight.set(telemachus)
         
         await ctx.send(f"✅ Split updated! Penelope: **{penelope}%**, Telemachus: **{telemachus}%**.")
-      
+
+    # --- CHANNEL MANAGEMENT SUBCOMMANDS ---
+
+    @odyssettings.group(name="channel")
+    async def odyssettings_channel(self, ctx: commands.Context):
+        """Manage allowed or blacklisted channels."""
+        pass
+
+    @odyssettings_channel.command(name="allow")
+    async def channel_allow(self, ctx: commands.Context, channel: discord.TextChannel):
+        """Add a channel to the allowed list (whitelisting)."""
+        allowed = await self.config.guild(ctx.guild).allowed_channels()
+        if channel.id in allowed:
+            return await ctx.send(f"❌ {channel.mention} is already in the allowed channels list.")
+        
+        allowed.append(channel.id)
+        await self.config.guild(ctx.guild).allowed_channels.set(allowed)
+        await ctx.send(f"✅ Added {channel.mention} to the allowed channels.")
+
+    @odyssettings_channel.command(name="disallow")
+    async def channel_disallow(self, ctx: commands.Context, channel: discord.TextChannel):
+        """Remove a channel from the allowed list."""
+        allowed = await self.config.guild(ctx.guild).allowed_channels()
+        if channel.id not in allowed:
+            return await ctx.send(f"❌ {channel.mention} is not in the allowed channels list.")
+        
+        allowed.remove(channel.id)
+        await self.config.guild(ctx.guild).allowed_channels.set(allowed)
+        await ctx.send(f"✅ Removed {channel.mention} from the allowed channels.")
+
+    @odyssettings_channel.command(name="blacklist")
+    async def channel_blacklist(self, ctx: commands.Context, channel: discord.TextChannel):
+        """Blacklist a channel so responses never happen there."""
+        blacklisted = await self.config.guild(ctx.guild).blacklisted_channels()
+        if channel.id in blacklisted:
+            return await ctx.send(f"❌ {channel.mention} is already blacklisted.")
+        
+        blacklisted.append(channel.id)
+        await self.config.guild(ctx.guild).blacklisted_channels.set(blacklisted)
+        await ctx.send(f"✅ Blacklisted {channel.mention}. Odysseus will stay quiet there.")
+
+    @odyssettings_channel.command(name="unblacklist")
+    async def channel_unblacklist(self, ctx: commands.Context, channel: discord.TextChannel):
+        """Remove a channel from the blacklist."""
+        blacklisted = await self.config.guild(ctx.guild).blacklisted_channels()
+        if channel.id not in blacklisted:
+            return await ctx.send(f"❌ {channel.mention} is not blacklisted.")
+        
+        blacklisted.remove(channel.id)
+        await self.config.guild(ctx.guild).blacklisted_channels.set(blacklisted)
+        await ctx.send(f"✅ Removed {channel.mention} from the blacklist.")
+        
