@@ -7,7 +7,7 @@ class Yaoi(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(name="yaoi", hidden=True)
+    @commands.command(name="yaoi")
     @commands.is_nsfw()
     async def yaoi(self, ctx: commands.Context):
         """Sends a random image from the API (NSFW channels only)."""
@@ -28,4 +28,4 @@ class Yaoi(commands.Cog):
     async def yaoi_error(self, ctx: commands.Context, error):
         if isinstance(error, commands.CheckFailure):
             await ctx.send("❌ This command can only be used in an age-restricted (NSFW) channel.")
-                      
+                        
