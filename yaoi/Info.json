@@ -1,0 +1,12 @@
+{
+    "author": ["Strife"],
+    "install_msg": "Thanks for installing! Use `[p]yaoi` in an age-restricted channel.",
+    "name": "Yaoi",
+    "short": "A cog that delivers random yaoi imagery in age-restricted channels.",
+    "description": "A cog that delivers random yaoi imagery in age-restricted channels.",
+    "tags": ["anime", "media"],
+    "min_bot_version": "3.5.0",
+    "hidden": false,
+    "required_cogs": {},
+    "requirements": []
+}
