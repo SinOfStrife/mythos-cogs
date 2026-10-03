@@ -26,14 +26,15 @@ class Yaoi(commands.Cog):
             connector = aiohttp.TCPConnector(ssl=ssl_context)
 
             async with aiohttp.ClientSession(connector=connector) as session:
+                # Get the API response
                 async with session.get(api_url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
                     resp.raise_for_status()
                     data = await resp.json()
 
-            if data.get("error") is not False:
-                return await ctx.send("❌ API returned an error.")
+                if data.get("error") is not False:
+                    return await ctx.send("❌ API returned an error.")
 
-            async with aiohttp.ClientSession(connector=connector) as session:
+                # Download the image using the SAME session
                 async with session.get(data["link"], timeout=aiohttp.ClientTimeout(total=15)) as img_resp:
                     image_bytes = await img_resp.read()
 
