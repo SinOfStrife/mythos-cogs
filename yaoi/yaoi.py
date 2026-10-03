@@ -30,7 +30,7 @@ class Yaoi(commands.Cog):
             if data.get("error") is not False:
                 return await ctx.send("❌ API returned an error.")
 
-            return await ctx.send(data["link"])
+            return await ctx.send(f"||{data['link']}||")
 
         except Exception as e:
             return await ctx.send(f"❌ API request failed: {e}")
