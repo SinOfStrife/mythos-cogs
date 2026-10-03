@@ -1,5 +1,6 @@
 import ssl
 import aiohttp
+import discord
 from redbot.core import commands
 
 
@@ -30,7 +31,9 @@ class Yaoi(commands.Cog):
             if data.get("error") is not False:
                 return await ctx.send("❌ API returned an error.")
 
-            return await ctx.send(f"||{data['link']}|| ")
+            embed = discord.Embed()
+            embed.set_image(url=data['link'])
+            return await ctx.send(embed=embed)
 
         except Exception as e:
             return await ctx.send(f"❌ API request failed: {e}")
