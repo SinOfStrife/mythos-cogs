@@ -1,4 +1,6 @@
 import ssl
+from io import BytesIO
+
 import aiohttp
 import discord
 from redbot.core import commands
@@ -13,7 +15,7 @@ class Yaoi(commands.Cog):
     @commands.command(name="yaoi", hidden=True)
     @commands.is_nsfw()
     async def yaoi(self, ctx: commands.Context):
-        """Sends a random image from the API (NSFW channels only)."""
+        """Sends a random GIF from the API (NSFW channels only)."""
         api_url = "https://api.purrbot.site/v2/img/nsfw/yaoi/gif"
 
         try:
@@ -31,12 +33,20 @@ class Yaoi(commands.Cog):
             if data.get("error") is not False:
                 return await ctx.send("❌ API returned an error.")
 
+            async with aiohttp.ClientSession(connector=connector) as session:
+                async with session.get(data["link"], timeout=aiohttp.ClientTimeout(total=15)) as img_resp:
+                    image_bytes = await img_resp.read()
+
+            spoiler_name = "SPOILER_yaoi.gif"
+            image_file = discord.File(BytesIO(image_bytes), filename=spoiler_name)
+
             embed = discord.Embed()
-            embed.set_image(url=data['link'])
-            return await ctx.send(embed=embed)
+            embed.set_image(url=f"attachment://{spoiler_name}")
+
+            await ctx.send(embed=embed, file=image_file)
 
         except Exception as e:
-            return await ctx.send(f"❌ API request failed: {e}")
+            await ctx.send(f"❌ API request failed: {e}")
 
     @yaoi.error
     async def yaoi_error(self, ctx: commands.Context, error):
