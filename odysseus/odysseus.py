@@ -12,9 +12,9 @@ class Odysseus(commands.Cog):
             self, identifier=9876543210, force_registration=True
         )
         
-        # Set default server settings
+        # Set default server settings (Disabled by default)
         default_guild = {
-            "enabled": True,
+            "enabled": False,        # Changed to False so it starts turned off
             "allowed_channels": [],  # Empty list means active everywhere (unless blacklisted)
             "blacklisted_channels": [], # List of blocked channels
             "penelope_weight": 75,   # Default 75% Penelope
