@@ -1,6 +1,6 @@
 {
     "author": ["Strife"],
-    "install_msg": "Thanks for installing Odysseus!",
+    "install_msg": "Thanks for installing Odysseus! Note: This cog is disabled by default. Use `[p]ody toggle` to enable it.",
     "name": "Odysseus",
     "short": "Responds to Odysseus with family members.",
     "description": "Listens for the name Odysseus and replies with Penelope or TELEMACHUS!.",
