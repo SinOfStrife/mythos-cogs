@@ -26,7 +26,6 @@ class Yaoi(commands.Cog):
             connector = aiohttp.TCPConnector(ssl=ssl_context)
 
             async with aiohttp.ClientSession(connector=connector) as session:
-                # Get the API response
                 async with session.get(api_url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
                     resp.raise_for_status()
                     data = await resp.json()
@@ -34,17 +33,13 @@ class Yaoi(commands.Cog):
                 if data.get("error") is not False:
                     return await ctx.send("❌ API returned an error.")
 
-                # Download the image using the SAME session
                 async with session.get(data["link"], timeout=aiohttp.ClientTimeout(total=15)) as img_resp:
                     image_bytes = await img_resp.read()
 
             spoiler_name = "SPOILER_yaoi.gif"
-            image_file = discord.File(BytesIO(image_bytes), filename=spoiler_name)
+            file = discord.File(BytesIO(image_bytes), filename=spoiler_name)
 
-            embed = discord.Embed()
-            embed.set_image(url=f"attachment://{spoiler_name}")
-
-            await ctx.send(embed=embed, file=image_file)
+            await ctx.send(file=file)
 
         except Exception as e:
             await ctx.send(f"❌ API request failed: {e}")
