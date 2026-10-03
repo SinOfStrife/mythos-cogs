@@ -1,5 +1,7 @@
+import ssl
 import aiohttp
 from redbot.core import commands
+
 
 class Yaoi(commands.Cog):
     """A cog that delivers random yaoi imagery in age-restricted channels."""
@@ -7,14 +9,20 @@ class Yaoi(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(name="yaoi")
+    @commands.command(name="yaoi", hidden=True)
     @commands.is_nsfw()
     async def yaoi(self, ctx: commands.Context):
         """Sends a random image from the API (NSFW channels only)."""
         api_url = "https://api.purrbot.site/v2/img/nsfw/yaoi/gif"
 
         try:
-            async with aiohttp.ClientSession() as session:
+            ssl_context = ssl.create_default_context()
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+
+            connector = aiohttp.TCPConnector(ssl=ssl_context)
+
+            async with aiohttp.ClientSession(connector=connector) as session:
                 async with session.get(api_url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
                     resp.raise_for_status()
                     data = await resp.json()
