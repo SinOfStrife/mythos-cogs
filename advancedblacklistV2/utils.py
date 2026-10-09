@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import datetime
-from contextlib import suppress
 from typing import Any, Callable, Dict, Final, Iterable, List, Literal, Optional, Union
 
 import discord
@@ -87,7 +86,7 @@ class Cache:
         self.__bl_internal["global"] = {}
 
 
-# --- Confirmation & Pagination Views ---
+# --- Confirmation & Format Customizer Views ---
 
 class ConfirmView(discord.ui.View):
     def __init__(self, ctx: commands.Context):
@@ -110,89 +109,6 @@ class ConfirmView(discord.ui.View):
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.ctx.author.id:
             await interaction.response.send_message("You cannot confirm this action.", ephemeral=True)
-            return False
-        return True
-
-
-class Page:
-    def __init__(self, ctx: commands.Context, data: List[str], *, title: str, footer: str):
-        self.ctx = ctx
-        self.data = data
-        self.title = title
-        self.footer = footer
-        self.max_len = len(self.data)
-
-    async def format_page(self, page: str) -> dict:
-        if await self.ctx.embed_requested():
-            embed = discord.Embed(
-                title=self.title,
-                description=page,
-                colour=await self.ctx.embed_colour(),
-                timestamp=_timestamp(),
-            )
-            embed.set_footer(text=self.footer)
-            return {"embed": embed}
-        return {"content": f"# {self.title}\n\n{page}\n-# {self.footer}"}
-
-    def __len__(self) -> int:
-        return len(self.data)
-
-
-class Menu(discord.ui.View):
-    def __init__(self, source: Page, bot: Red, ctx: commands.Context):
-        super().__init__(timeout=120.0)
-        self.source = source
-        self.bot = bot
-        self.ctx = ctx
-        self.msg: Optional[discord.Message] = None
-        self.current_page: int = 0
-        self._add_buttons()
-
-    def _add_buttons(self) -> None:
-        prev_btn = discord.ui.Button(style=discord.ButtonStyle.grey, label="◀", disabled=len(self.source) <= 1)
-        prev_btn.callback = self._on_prev
-        self.add_item(prev_btn)
-
-        stop_btn = discord.ui.Button(style=discord.ButtonStyle.red, label="✕")
-        stop_btn.callback = self._on_stop
-        self.add_item(stop_btn)
-
-        next_btn = discord.ui.Button(style=discord.ButtonStyle.grey, label="▶", disabled=len(self.source) <= 1)
-        next_btn.callback = self._on_next
-        self.add_item(next_btn)
-
-    async def _on_prev(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer()
-        self.current_page = (self.current_page - 1) % self.source.max_len
-        await self._show_page()
-
-    async def _on_next(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer()
-        self.current_page = (self.current_page + 1) % self.source.max_len
-        await self._show_page()
-
-    async def _on_stop(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer()
-        self.stop()
-        if self.msg:
-            with suppress(discord.HTTPException):
-                await self.msg.delete()
-
-    async def _show_page(self) -> None:
-        page_content = self.source.data[self.current_page]
-        kwargs = await self.source.format_page(page_content)
-        if self.msg:
-            await self.msg.edit(view=self, **kwargs)
-
-    @classmethod
-    async def start(cls, source: Page, ctx: commands.Context) -> None:
-        self = cls(source, ctx.bot, ctx)
-        kwargs = await source.format_page(source.data[0])
-        self.msg = await ctx.send(view=self, **kwargs)
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.ctx.author.id:
-            await interaction.response.send_message("You are not authorized to use this menu.", ephemeral=True)
             return False
         return True
 
@@ -240,7 +156,6 @@ class FormatView(discord.ui.View):
         self.ctx = ctx
         self.config = config
         self.current_format = current_format
-        self.msg: Optional[discord.Message] = None
 
     @button_dec(label="Edit Format", style=discord.ButtonStyle.green)
     async def edit_format(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
