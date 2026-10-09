@@ -59,7 +59,7 @@ class AdvancedBlacklistV2(commands.Cog):
     """An advanced extension of core blocklisting and allowlisting commands."""
 
     __author__: Final[List[str]] = ["Jojo#7791", "SinOfStrife"]
-    __version__: Final[str] = "4.0.1"
+    __version__: Final[str] = "4.0.2"
     __red_end_user_data_statement__: Final[str] = (
         "This cog stores Discord user IDs, role IDs, and guild IDs strictly for moderation, "
         "blocklisting, and allowlisting purposes."
@@ -72,19 +72,18 @@ class AdvancedBlacklistV2(commands.Cog):
         for config_type, data in config_structure.items():
             getattr(self.config, f"register_{config_type}")(**data)
 
+        # Detach Red core commands BEFORE the cog registers its own commands
         self._original_coms: List[commands.Command] = []
-        self._cache = Cache()
-
-    async def cog_load(self) -> None:
-        """Startup lifecycle: import core blacklists, patch methods, hijack commands."""
-        await self._patch.startup()
-
-        # Detach core commands cleanly by checking both primary names and aliases
         for name in _CORE_NAMES:
             cmd = self.bot.remove_command(name)
             if cmd and cmd not in self._original_coms:
                 self._original_coms.append(cmd)
 
+        self._cache = Cache()
+
+    async def cog_load(self) -> None:
+        """Startup lifecycle: patch methods and import pre-existing bans."""
+        await self._patch.startup()
         await self._sync_preexisting_data()
 
     async def cog_unload(self) -> None:
