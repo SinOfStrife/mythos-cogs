@@ -447,4 +447,363 @@ class AdvancedBlacklistV2(commands.Cog):
 
     # Listeners
     @commands.Cog.listener()
-    async def
+    async def on_add_to_blacklist(self, users: UsersOrRoles, guild: Optional[discord.Guild], adv_bl: bool = False) -> None:
+        if adv_bl: return
+        await self.add_to_list(users, white_black_list="blacklist", reason="No reason provided.", guild=guild, override=True)
+
+    @commands.Cog.listener()
+    async def on_remove_from_blacklist(self, users: UsersOrRoles, guild: Optional[discord.Guild], adv_bl: bool = False) -> None:
+        if adv_bl: return
+        await self.remove_from_list(users, white_black_list="blacklist", guild=guild, override=True)
+
+    @commands.Cog.listener()
+    async def on_blacklist_clear(self, guild: Optional[discord.Guild], adv_bl: bool = False) -> None:
+        if adv_bl: return
+        await self.clear_list(white_black_list="blacklist", guild=guild, override=True)
+
+    @commands.Cog.listener()
+    async def on_add_to_whitelist(self, users: UsersOrRoles, guild: Optional[discord.Guild], adv_bl: bool = False) -> None:
+        if adv_bl: return
+        await self.add_to_list(users, white_black_list="whitelist", reason="No reason provided.", guild=guild, override=True)
+
+    @commands.Cog.listener()
+    async def on_remove_from_whitelist(self, users: UsersOrRoles, guild: Optional[discord.Guild], adv_bl: bool = False) -> None:
+        if adv_bl: return
+        await self.remove_from_list(users, white_black_list="whitelist", guild=guild, override=True)
+
+    @commands.Cog.listener()
+    async def on_whitelist_clear(self, guild: Optional[discord.Guild], adv_bl: bool = False) -> None:
+        if adv_bl: return
+        await self.clear_list(white_black_list="whitelist", guild=guild, override=True)
+
+    # Global Blocklist Commands
+    @commands.group(name="blocklist", aliases=["denylist", "blacklist"], invoke_without_command=True)
+    @commands.is_owner()
+    async def blocklist(self, ctx: commands.Context) -> None:
+        """Manage the bot's global blocklist."""
+        await ctx.send_help()
+
+    @blocklist.command(name="status", aliases=["info"])
+    async def blocklist_status(self, ctx: commands.Context) -> None:
+        """Display an all-in-one V2 System Dashboard."""
+        gl_bl = len(await self.get_list(white_black_list="blacklist", guild=None))
+        gl_wl = len(await self.get_list(white_black_list="whitelist", guild=None))
+        log_ch = await self.config.log_channel()
+        log_str = f"<#{log_ch}>" if log_ch else "`Disabled`"
+
+        payload = {
+            "flags": 32768,
+            "components": [
+                {
+                    "type": 17,
+                    "accent_color": 0x5865F2,
+                    "components": [
+                        {"type": 10, "content": "### 📊 Global Blacklist System Dashboard"},
+                        {"type": 14, "spacing": 1, "divider": True},
+                        {"type": 10, "content": f"**Global Blocklist Count:** `{gl_bl}` users\n**Global Allowlist Count:** `{gl_wl}` users\n**Log Channel:** {log_str}\n**Version:** `{self.__version__}`"}
+                    ]
+                }
+            ]
+        }
+        await self._send_raw_v2_payload(ctx.channel.id, payload)
+
+    @blocklist.command(name="setchannel")
+    async def blocklist_setchannel(self, ctx: commands.Context, channel: Optional[discord.TextChannel] = None) -> None:
+        """Set the private channel for global blacklist logs."""
+        if channel:
+            await self.config.log_channel.set(channel.id)
+            await ctx.send(f"Global blocklist actions will now be logged to {channel.mention}.")
+        else:
+            await self.config.log_channel.set(None)
+            await ctx.send("Global blocklist logging has been disabled.")
+
+    @blocklist.command(name="check")
+    async def blocklist_check(self, ctx: commands.Context, user_or_role: discord.User) -> None:
+        """Inspect a user's status on the global blocklist."""
+        data = await self.get_list(white_black_list="blacklist", guild=None)
+        actual = str(user_or_role.id)
+        is_listed = actual in data
+        reason = data.get(actual, "None")
+
+        payload = self._build_v2_check_payload(user_or_role, "blacklist", None, is_listed, reason)
+        try:
+            await self._send_raw_v2_payload(ctx.channel.id, payload)
+        except discord.HTTPException as error:
+            log.exception("Failed to send V2 blocklist check payload for user %s", user_or_role.id)
+            await ctx.send(f"Failed to deliver check layout: `{error}`")
+
+    @blocklist.command(name="add")
+    async def blocklist_add(self, ctx: commands.Context, users: commands.Greedy[discord.User], *, reason: Optional[str] = None) -> None:
+        """Add users to the global blocklist."""
+        if not users:
+            await ctx.send_help()
+            return
+        valid, clean_users = await self._filter_self_harm(ctx, users, "blacklist", None)
+        if not valid or not clean_users:
+            return
+
+        reason = reason or "No reason provided."
+        await self.add_to_list(clean_users, white_black_list="blacklist", reason=reason, guild=None)
+        for u in clean_users:
+            await self._log_action("Added", u, "blacklist", reason, ctx.author, guild=None)
+
+        desc = f"**Added:** {len(clean_users)} user(s)\n**Reason:** `{reason}`"
+        await self._send_action_mini_card(ctx, "🔴 Added to Global Blocklist", desc, 0xED4245, auto_delete=True)
+
+    @blocklist.command(name="remove", aliases=["del", "delete"])
+    async def blocklist_remove(self, ctx: commands.Context, users: commands.Greedy[discord.User]) -> None:
+        """Remove users from the global blocklist."""
+        if not users:
+            await ctx.send_help()
+            return
+        await self.remove_from_list(users, white_black_list="blacklist", guild=None)
+        for u in users:
+            await self._log_action("Removed", u, "blacklist", "Removed by owner", ctx.author, guild=None)
+
+        desc = f"**Removed:** {len(users)} user(s) from Global Blocklist."
+        await self._send_action_mini_card(ctx, "🟢 Removed from Global Blocklist", desc, 0x57F287, auto_delete=True)
+
+    @blocklist.command(name="edit")
+    async def blocklist_edit(self, ctx: commands.Context, user: discord.User, *, reason: str) -> None:
+        """Edit the reason for a globally blocklisted user."""
+        data = await self.get_list(white_black_list="blacklist", guild=None)
+        if str(user.id) not in data:
+            await ctx.send("That user is not on the global blocklist.")
+            return
+        await self.edit_reason(user, white_black_list="blacklist", reason=reason, guild=None)
+        await self._log_action("Edited Reason", user, "blacklist", reason, ctx.author, guild=None)
+
+        desc = f"**Target:** {user.mention}\n**New Reason:** `{reason}`"
+        await self._send_action_mini_card(ctx, "✏️ Updated Blocklist Reason", desc, 0x5865F2, auto_delete=True)
+
+    @blocklist.command(name="list")
+    async def blocklist_list(self, ctx: commands.Context) -> None:
+        """List all users on the global blocklist using V2 Hybrid Cards."""
+        await self.send_v2_list(ctx, white_black_list="blacklist", guild=None)
+
+    @blocklist.command(name="clear")
+    async def blocklist_clear(self, ctx: commands.Context, confirm: bool = False) -> None:
+        """Clear all users from the global blocklist."""
+        if not confirm:
+            data = await self.get_list(white_black_list="blacklist", guild=None)
+            warn_payload = {
+                "flags": 32768,
+                "components": [
+                    {
+                        "type": 17,
+                        "accent_color": 0xED4245,
+                        "components": [
+                            {"type": 10, "content": "### ⚠️ DESTRUCTIVE ACTION WARNING"},
+                            {"type": 14, "spacing": 1, "divider": True},
+                            {"type": 10, "content": f"Are you sure you want to permanently clear **{len(data)}** entry/entries from the global blocklist?"}
+                        ]
+                    }
+                ]
+            }
+            with contextlib.suppress(discord.HTTPException):
+                await self._send_raw_v2_payload(ctx.channel.id, warn_payload)
+
+            view = ConfirmView(ctx)
+            msg = await ctx.send("Confirm wiping the list below:", view=view)
+            await view.wait()
+            with contextlib.suppress(discord.HTTPException):
+                await msg.delete()
+            if not view.value:
+                await ctx.send("Action canceled.")
+                return
+
+        await self.clear_list(white_black_list="blacklist", guild=None)
+        await self._log_action("Cleared List", "All Users", "blacklist", "Wiped by owner", ctx.author, guild=None)
+        await ctx.send("Cleared all users from the global blocklist.")
+
+    @blocklist.command(name="format")
+    async def blocklist_format(self, ctx: commands.Context) -> None:
+        """Edit format template with a Live V2 Preview Card."""
+        current = await self.config.format()
+
+        preview_payload = {
+            "flags": 32768,
+            "components": [
+                {
+                    "type": 17,
+                    "accent_color": 0x5865F2,
+                    "components": [
+                        {"type": 10, "content": f"### 👁️ Live Format Preview: {current['title']}"},
+                        {"type": 14, "spacing": 1, "divider": True},
+                        {"type": 10, "content": f"1. SampleUser: Spamming DMs\n2. SampleBot: Raiding"},
+                        {"type": 14, "spacing": 1, "divider": True},
+                        {"type": 10, "content": f"-# {current['footer']}"}
+                    ]
+                }
+            ]
+        }
+        with contextlib.suppress(discord.HTTPException):
+            await self._send_raw_v2_payload(ctx.channel.id, preview_payload)
+
+        await ctx.send(
+            "Click below to edit or reset the list display template:",
+            view=FormatView(self.bot, ctx, self.config, current)
+        )
+
+    # Local Blocklist Commands
+    @commands.group(name="localblocklist", aliases=["localblacklist", "localdenylist"], invoke_without_command=True)
+    @commands.guild_only()
+    @commands.admin_or_permissions(administrator=True)
+    async def local_blocklist(self, ctx: commands.Context) -> None:
+        """Manage the server's local blocklist."""
+        await ctx.send_help()
+
+    @local_blocklist.command(name="check")
+    async def local_blocklist_check(self, ctx: commands.Context, user_or_role: Union[discord.Member, discord.Role]) -> None:
+        """Inspect a member/role on the local blocklist."""
+        data = await self.get_list(white_black_list="blacklist", guild=ctx.guild)
+        actual = str(user_or_role.id)
+        is_listed = actual in data
+        reason = data.get(actual, "None")
+
+        payload = self._build_v2_check_payload(user_or_role, "blacklist", ctx.guild, is_listed, reason)
+        try:
+            await self._send_raw_v2_payload(ctx.channel.id, payload)
+        except discord.HTTPException as error:
+            log.exception("Failed to send V2 local blocklist check payload for ID %s", user_or_role.id)
+            await ctx.send(f"Failed to deliver check layout: `{error}`")
+
+    @local_blocklist.command(name="add")
+    async def local_blocklist_add(self, ctx: commands.Context, users_or_roles: commands.Greedy[Union[discord.Member, discord.Role]], *, reason: Optional[str] = None) -> None:
+        """Add users/roles to local blocklist."""
+        if not users_or_roles:
+            await ctx.send_help()
+            return
+        valid, clean_items = await self._filter_self_harm(ctx, users_or_roles, "blacklist", ctx.guild)
+        if not valid or not clean_items: return
+
+        reason = reason or "No reason provided."
+        await self.add_to_list(clean_items, white_black_list="blacklist", reason=reason, guild=ctx.guild)
+        for item in clean_items:
+            await self._log_action("Added", item, "blacklist", reason, ctx.author, guild=ctx.guild)
+
+        desc = f"**Added:** {len(clean_items)} item(s) to Local Blocklist.\n**Reason:** `{reason}`"
+        await self._send_action_mini_card(ctx, "🔴 Added to Local Blocklist", desc, 0xED4245, auto_delete=True)
+
+    @local_blocklist.command(name="remove", aliases=["del", "delete"])
+    async def local_blocklist_remove(self, ctx: commands.Context, users_or_roles: commands.Greedy[Union[discord.Member, discord.Role]]) -> None:
+        """Remove users/roles from local blocklist."""
+        if not users_or_roles:
+            await ctx.send_help()
+            return
+        await self.remove_from_list(users_or_roles, white_black_list="blacklist", guild=ctx.guild)
+        for item in users_or_roles:
+            await self._log_action("Removed", item, "blacklist", "Removed by admin", ctx.author, guild=ctx.guild)
+
+        desc = f"**Removed:** {len(users_or_roles)} item(s) from Local Blocklist."
+        await self._send_action_mini_card(ctx, "🟢 Removed from Local Blocklist", desc, 0x57F287, auto_delete=True)
+
+    @local_blocklist.command(name="list")
+    async def local_blocklist_list(self, ctx: commands.Context) -> None:
+        """List local blocklist using V2 Hybrid Cards."""
+        await self.send_v2_list(ctx, white_black_list="blacklist", guild=ctx.guild)
+
+    # Global Allowlist Commands
+    @commands.group(name="allowlist", aliases=["whitelist"], invoke_without_command=True)
+    @commands.is_owner()
+    async def allowlist(self, ctx: commands.Context) -> None:
+        """Manage the bot's global allowlist."""
+        await ctx.send_help()
+
+    @allowlist.command(name="check")
+    async def allowlist_check(self, ctx: commands.Context, user: discord.User) -> None:
+        """Inspect a user's status on global allowlist."""
+        data = await self.get_list(white_black_list="whitelist", guild=None)
+        actual = str(user.id)
+        is_listed = actual in data
+        reason = data.get(actual, "None")
+
+        payload = self._build_v2_check_payload(user, "whitelist", None, is_listed, reason)
+        try:
+            await self._send_raw_v2_payload(ctx.channel.id, payload)
+        except discord.HTTPException as error:
+            log.exception("Failed to send V2 allowlist check payload for user %s", user.id)
+            await ctx.send(f"Failed to deliver check layout: `{error}`")
+
+    @allowlist.command(name="list")
+    async def allowlist_list(self, ctx: commands.Context) -> None:
+        """List global allowlist using V2 Hybrid Cards."""
+        await self.send_v2_list(ctx, white_black_list="whitelist", guild=None)
+
+    # Local Allowlist Commands
+    @commands.group(name="localallowlist", aliases=["localwhitelist"], invoke_without_command=True)
+    @commands.guild_only()
+    @commands.admin_or_permissions(administrator=True)
+    async def local_allowlist(self, ctx: commands.Context) -> None:
+        """Manage the server's local allowlist."""
+        await ctx.send_help()
+
+    @local_allowlist.command(name="check")
+    async def local_allowlist_check(self, ctx: commands.Context, user_or_role: Union[discord.Member, discord.Role]) -> None:
+        """Inspect local allowlist status."""
+        data = await self.get_list(white_black_list="whitelist", guild=ctx.guild)
+        actual = str(user_or_role.id)
+        is_listed = actual in data
+        reason = data.get(actual, "None")
+
+        payload = self._build_v2_check_payload(user_or_role, "whitelist", ctx.guild, is_listed, reason)
+        try:
+            await self._send_raw_v2_payload(ctx.channel.id, payload)
+        except discord.HTTPException as error:
+            log.exception("Failed to send V2 local allowlist check payload for ID %s", user_or_role.id)
+            await ctx.send(f"Failed to deliver check layout: `{error}`")
+
+    @local_allowlist.command(name="list")
+    async def local_allowlist_list(self, ctx: commands.Context) -> None:
+        """List local allowlist using V2 Hybrid Cards."""
+        await self.send_v2_list(ctx, white_black_list="whitelist", guild=ctx.guild)
+
+    # Hybrid V2 List Pagination Generator
+    async def send_v2_list(
+        self,
+        ctx: commands.Context,
+        *,
+        white_black_list: _WhiteBlacklist,
+        guild: Optional[discord.Guild],
+    ) -> None:
+        allow_deny = "allowlist" if white_black_list == "whitelist" else "blocklist"
+        local = f"Local ({guild.name}) " if guild else "Global "
+
+        target_list = await self.get_list(white_black_list=white_black_list, guild=guild)
+        if not target_list:
+            await ctx.send(f"There are no users or roles on the {local}{allow_deny}.")
+            return
+
+        items = list(target_list.items())
+        chunk_size = 8
+        chunks = [items[i:i + chunk_size] for i in range(0, len(items), chunk_size)]
+        total_pages = len(chunks)
+
+        v2_pages: List[dict] = []
+        for page_idx, chunk in enumerate(chunks, 1):
+            container_components = [
+                {"type": 10, "content": f"### 📜 {local}{allow_deny.capitalize()} (Page {page_idx}/{total_pages})"}
+            ]
+            for item, reason in chunk:
+                name = None
+                if item.isdigit():
+                    uid = int(item)
+                    user = self.bot.get_user(uid)
+                    if user: name = user.name
+                    elif guild:
+                        role = guild.get_role(uid)
+                        if role: name = role.name
+                name = name or item
+
+                container_components.append({"type": 14, "spacing": 1, "divider": True})
+                container_components.append({"type": 10, "content": f"**{name}** (`{item}`)\nReason: `{reason}`"})
+
+            v2_pages.append({
+                "flags": 32768,
+                "components": [{"type": 17, "accent_color": 0x5865F2, "components": container_components}]
+            })
+
+        response = await self._send_raw_v2_payload(ctx.channel.id, v2_pages[0])
+        menu = V2ListMenu(self, ctx, v2_pages)
+        menu.v2_msg_id = int(response["id"])
+        menu.btn_msg = await ctx.send(content="-# **Navigate list pages:**", view=menu)
