@@ -507,6 +507,72 @@ class AdvancedBlacklistV2(commands.Cog):
         }
         await self._send_raw_v2_payload(ctx.channel.id, payload)
 
+    @blocklist.command(name="testv2")
+    @commands.is_owner()
+    async def blocklist_testv2(self, ctx: commands.Context) -> None:
+        """Test all Components V2 layouts implemented in the cog."""
+        await ctx.send("🧪 **Running Components V2 Layout Diagnostic Test...**")
+
+        gl_bl = len(await self.get_list(white_black_list="blacklist", guild=None))
+        gl_wl = len(await self.get_list(white_black_list="whitelist", guild=None))
+        log_ch = await self.config.log_channel()
+        log_str = f"<#{log_ch}>" if log_ch else "`Disabled`"
+
+        dash_payload = {
+            "flags": 32768,
+            "components": [
+                {
+                    "type": 17,
+                    "accent_color": 0x5865F2,
+                    "components": [
+                        {"type": 10, "content": "### 📊 1. System Dashboard Test"},
+                        {"type": 14, "spacing": 1, "divider": True},
+                        {"type": 10, "content": f"**Global Blocklist Count:** `{gl_bl}`\n**Global Allowlist Count:** `{gl_wl}`\n**Log Channel:** {log_str}\n**Status:** Operational 🟢"}
+                    ]
+                }
+            ]
+        }
+        await self._send_raw_v2_payload(ctx.channel.id, dash_payload)
+
+        check_listed = self._build_v2_check_payload(ctx.author, "blacklist", None, True, "Mock reason: Violating server terms.")
+        await self._send_raw_v2_payload(ctx.channel.id, check_listed)
+
+        check_clean = self._build_v2_check_payload(ctx.author, "blacklist", None, False, "None")
+        await self._send_raw_v2_payload(ctx.channel.id, check_clean)
+
+        action_payload = {
+            "flags": 32768,
+            "components": [
+                {
+                    "type": 17,
+                    "accent_color": 0xED4245,
+                    "components": [
+                        {"type": 10, "content": "### 🔴 3. Action Mini-Card Test"},
+                        {"type": 14, "spacing": 1, "divider": True},
+                        {"type": 10, "content": f"**Action:** Added\n**Target:** {ctx.author.mention} (`{ctx.author.id}`)\n**Reason:** `Testing action feedback card layout`"}
+                    ]
+                }
+            ]
+        }
+        await self._send_raw_v2_payload(ctx.channel.id, action_payload)
+
+        warn_payload = {
+            "flags": 32768,
+            "components": [
+                {
+                    "type": 17,
+                    "accent_color": 0xED4245,
+                    "components": [
+                        {"type": 10, "content": "### ⚠️ 4. Destructive Warning Banner Test"},
+                        {"type": 14, "spacing": 1, "divider": True},
+                        {"type": 10, "content": "Are you sure you want to permanently clear **42** entry/entries from the global blocklist?"}
+                    ]
+                }
+            ]
+        }
+        await self._send_raw_v2_payload(ctx.channel.id, warn_payload)
+        await ctx.send("✅ **V2 Diagnostic Test Complete!** All component variants displayed above.")
+
     @blocklist.command(name="setchannel")
     async def blocklist_setchannel(self, ctx: commands.Context, channel: Optional[discord.TextChannel] = None) -> None:
         """Set the private channel for global blacklist logs."""
@@ -793,10 +859,14 @@ class AdvancedBlacklistV2(commands.Cog):
                     elif guild:
                         role = guild.get_role(uid)
                         if role: name = role.name
-                name = name or item
+
+                if name and name != item:
+                    content_str = f"**{name}** (`{item}`)\nReason: `{reason}`"
+                else:
+                    content_str = f"`{item}`\nReason: `{reason}`"
 
                 container_components.append({"type": 14, "spacing": 1, "divider": True})
-                container_components.append({"type": 10, "content": f"**{name}** (`{item}`)\nReason: `{reason}`"})
+                container_components.append({"type": 10, "content": content_str})
 
             v2_pages.append({
                 "flags": 32768,
