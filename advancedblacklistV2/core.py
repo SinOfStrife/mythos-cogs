@@ -59,7 +59,7 @@ class AdvancedBlacklistV2(commands.Cog):
     """An advanced extension of core blocklisting and allowlisting commands."""
 
     __author__: Final[List[str]] = ["Jojo#7791", "SinOfStrife"]
-    __version__: Final[str] = "4.0.2"
+    __version__: Final[str] = "4.1.0"
     __red_end_user_data_statement__: Final[str] = (
         "This cog stores Discord user IDs, role IDs, and guild IDs strictly for moderation, "
         "blocklisting, and allowlisting purposes."
@@ -160,7 +160,7 @@ class AdvancedBlacklistV2(commands.Cog):
                 self._cache.clear_blacklist(g_obj)
                 self._cache.clear_whitelist(g_obj)
 
-    # --- Isolated Logging Helper ---
+    # --- Isolated Logging Helper (Components V2) ---
 
     async def _log_action(
         self,
@@ -187,62 +187,64 @@ class AdvancedBlacklistV2(commands.Cog):
         target_id = getattr(target, "id", target)
         list_type = "Allowlist" if white_black_list == "whitelist" else "Blocklist"
         scope = f"Local ({guild.name})" if guild else "Global"
+        color_int = 0xED4245 if "Removed" not in action else 0x57F287
 
-        can_embed = channel.permissions_for(channel.guild.me).embed_links
-        if can_embed:
-            embed = discord.Embed(
-                title=f"🛡️ {scope} {list_type} Update",
-                color=discord.Color.red() if "Removed" not in action else discord.Color.green(),
-                timestamp=_timestamp(),
-            )
-            embed.add_field(name="Action", value=action, inline=True)
-            embed.add_field(name="Target", value=f"{target_name} (`{target_id}`)", inline=True)
-            embed.add_field(name="Moderator", value=f"{author.mention} (`{author.id}`)", inline=True)
-            embed.add_field(name="Reason", value=f"`{reason}`", inline=False)
-            with contextlib.suppress(discord.HTTPException):
-                await channel.send(embed=embed)
-        else:
-            msg = (
-                f"🛡️ **{scope} {list_type} Update**\n"
-                f"• **Action:** {action}\n"
-                f"• **Target:** {target_name} (`{target_id}`)\n"
-                f"• **Moderator:** {author.name} (`{author.id}`)\n"
-                f"• **Reason:** {reason}"
-            )
-            with contextlib.suppress(discord.HTTPException):
-                await channel.send(msg)
+        payload = {
+            "flags": 32768,  # IS_COMPONENTS_V2
+            "components": [
+                {
+                    "type": 17,  # Container
+                    "accent_color": color_int,
+                    "components": [
+                        {"type": 10, "content": f"### 🛡️ {scope} {list_type} Update"},
+                        {"type": 14, "spacing": 1, "divider": True},
+                        {"type": 10, "content": f"**Action:** {action}\n**Target:** {target_name} (`{target_id}`)\n**Moderator:** {author.mention} (`{author.id}`)\n**Reason:** `{reason}`"}
+                    ]
+                }
+            ]
+        }
+        with contextlib.suppress(discord.HTTPException):
+            await channel.send(**payload)
 
     # --- Core Helpers & Protections ---
 
-    def _build_check_embed(
+    def _build_v2_check_payload(
         self,
         target: UserOrRole,
         white_black_list: _WhiteBlacklist,
         guild: Optional[discord.Guild],
         is_listed: bool,
         reason: str,
-    ) -> discord.Embed:
+    ) -> dict:
         target_name = getattr(target, "name", str(target))
         target_id = getattr(target, "id", target)
         list_name = "Allowlist" if white_black_list == "whitelist" else "Blocklist"
         scope = f"Local ({guild.name})" if guild else "Global"
+        color_int = 0xED4245 if is_listed else 0x57F287
+        status_text = "Listed 🔴" if is_listed else "Not Listed 🟢"
 
-        color = discord.Color.red() if is_listed else discord.Color.green()
-        embed = discord.Embed(
-            title=f"🔍 {scope} {list_name} Check",
-            color=color,
-            timestamp=_timestamp(),
-        )
-        embed.add_field(name="Target", value=f"{target_name} (`{target_id}`)", inline=True)
-        embed.add_field(name="Status", value="Listed 🔴" if is_listed else "Not Listed 🟢", inline=True)
+        container_components = [
+            {"type": 10, "content": f"### 🔍 {scope} {list_name} Check"},
+            {"type": 14, "spacing": 1, "divider": True},
+            {"type": 10, "content": f"**Target:** {target_name} (`{target_id}`)\n**Status:** {status_text}"}
+        ]
         if is_listed:
-            embed.add_field(name="Reason", value=f"`{reason}`", inline=False)
-        return embed
+            container_components.append({"type": 10, "content": f"**Reason:** `{reason}`"})
+
+        return {
+            "flags": 32768,  # IS_COMPONENTS_V2
+            "components": [
+                {
+                    "type": 17,
+                    "accent_color": color_int,
+                    "components": container_components
+                }
+            ]
+        }
 
     async def _filter_self_harm(
         self, ctx: commands.Context, targets: UsersOrRoles, white_black_list: _WhiteBlacklist, guild: Optional[discord.Guild]
     ) -> Tuple[bool, List[UserOrRole]]:
-        """Prevents blacklisting the bot itself, the guild owner, or yourself."""
         clean: List[UserOrRole] = []
         for target in targets:
             tid = getattr(target, "id", target)
@@ -339,7 +341,6 @@ class AdvancedBlacklistV2(commands.Cog):
         if data:
             return data
 
-        # On-demand sync fallback for local guilds
         bot_list = await getattr(self.bot, f"get_{white_black_list}")(guild)
         if not bot_list:
             return {}
@@ -369,7 +370,7 @@ class AdvancedBlacklistV2(commands.Cog):
             else:
                 self._cache.update_blacklist(guild, target_list)
 
-    # --- Listeners to catch external core additions/removals ---
+    # --- Listeners ---
 
     @commands.Cog.listener()
     async def on_add_to_blacklist(self, users: UsersOrRoles, guild: Optional[discord.Guild], adv_bl: bool = False) -> None:
@@ -410,11 +411,11 @@ class AdvancedBlacklistV2(commands.Cog):
     # ==========================================
     # GLOBAL BLOCKLIST COMMANDS ([p]blocklist)
     # ==========================================
-    @commands.group(name="blocklist", aliases=["denylist", "blacklist"])
+    @commands.group(name="blocklist", aliases=["denylist", "blacklist"], invoke_without_command=True)
     @commands.is_owner()
     async def blocklist(self, ctx: commands.Context) -> None:
         """Manage the bot's global blocklist."""
-        pass
+        await ctx.send_help()
 
     @blocklist.command(name="setchannel")
     async def blocklist_setchannel(self, ctx: commands.Context, channel: Optional[discord.TextChannel] = None) -> None:
@@ -434,9 +435,9 @@ class AdvancedBlacklistV2(commands.Cog):
         is_listed = actual in data
         reason = data.get(actual, "None")
 
-        embed = self._build_check_embed(user_or_role, "blacklist", None, is_listed, reason)
+        payload = self._build_v2_check_payload(user_or_role, "blacklist", None, is_listed, reason)
         view = CheckUserView(self, ctx, user_or_role, "blacklist", None, is_listed, reason)
-        view.msg = await ctx.send(embed=embed, view=view)
+        view.msg = await ctx.send(**payload, view=view)
 
     @blocklist.command(name="add")
     async def blocklist_add(self, ctx: commands.Context, users: commands.Greedy[discord.User], *, reason: Optional[str] = None) -> None:
@@ -507,12 +508,12 @@ class AdvancedBlacklistV2(commands.Cog):
     # ==========================================
     # LOCAL BLOCKLIST COMMANDS ([p]localblocklist)
     # ==========================================
-    @commands.group(name="localblocklist", aliases=["localblacklist", "localdenylist"])
+    @commands.group(name="localblocklist", aliases=["localblacklist", "localdenylist"], invoke_without_command=True)
     @commands.guild_only()
     @commands.admin_or_permissions(administrator=True)
     async def local_blocklist(self, ctx: commands.Context) -> None:
         """Manage the server's local blocklist."""
-        pass
+        await ctx.send_help()
 
     @local_blocklist.command(name="setchannel")
     async def local_blocklist_setchannel(self, ctx: commands.Context, channel: Optional[discord.TextChannel] = None) -> None:
@@ -532,9 +533,9 @@ class AdvancedBlacklistV2(commands.Cog):
         is_listed = actual in data
         reason = data.get(actual, "None")
 
-        embed = self._build_check_embed(user_or_role, "blacklist", ctx.guild, is_listed, reason)
+        payload = self._build_v2_check_payload(user_or_role, "blacklist", ctx.guild, is_listed, reason)
         view = CheckUserView(self, ctx, user_or_role, "blacklist", ctx.guild, is_listed, reason)
-        view.msg = await ctx.send(embed=embed, view=view)
+        view.msg = await ctx.send(**payload, view=view)
 
     @local_blocklist.command(name="add")
     async def local_blocklist_add(self, ctx: commands.Context, users_or_roles: commands.Greedy[Union[discord.Member, discord.Role]], *, reason: Optional[str] = None) -> None:
@@ -599,11 +600,11 @@ class AdvancedBlacklistV2(commands.Cog):
     # ==========================================
     # GLOBAL ALLOWLIST COMMANDS ([p]allowlist)
     # ==========================================
-    @commands.group(name="allowlist", aliases=["whitelist"])
+    @commands.group(name="allowlist", aliases=["whitelist"], invoke_without_command=True)
     @commands.is_owner()
     async def allowlist(self, ctx: commands.Context) -> None:
         """Manage the bot's global allowlist (lockdown mode)."""
-        pass
+        await ctx.send_help()
 
     @allowlist.command(name="check")
     async def allowlist_check(self, ctx: commands.Context, user: discord.User) -> None:
@@ -613,9 +614,9 @@ class AdvancedBlacklistV2(commands.Cog):
         is_listed = actual in data
         reason = data.get(actual, "None")
 
-        embed = self._build_check_embed(user, "whitelist", None, is_listed, reason)
+        payload = self._build_v2_check_payload(user, "whitelist", None, is_listed, reason)
         view = CheckUserView(self, ctx, user, "whitelist", None, is_listed, reason)
-        view.msg = await ctx.send(embed=embed, view=view)
+        view.msg = await ctx.send(**payload, view=view)
 
     @allowlist.command(name="add")
     async def allowlist_add(self, ctx: commands.Context, users: commands.Greedy[discord.User], *, reason: Optional[str] = None) -> None:
@@ -680,12 +681,12 @@ class AdvancedBlacklistV2(commands.Cog):
     # ==========================================
     # LOCAL ALLOWLIST COMMANDS ([p]localallowlist)
     # ==========================================
-    @commands.group(name="localallowlist", aliases=["localwhitelist"])
+    @commands.group(name="localallowlist", aliases=["localwhitelist"], invoke_without_command=True)
     @commands.guild_only()
     @commands.admin_or_permissions(administrator=True)
     async def local_allowlist(self, ctx: commands.Context) -> None:
         """Manage the server's local allowlist."""
-        pass
+        await ctx.send_help()
 
     @local_allowlist.command(name="check")
     async def local_allowlist_check(self, ctx: commands.Context, user_or_role: Union[discord.Member, discord.Role]) -> None:
@@ -695,9 +696,9 @@ class AdvancedBlacklistV2(commands.Cog):
         is_listed = actual in data
         reason = data.get(actual, "None")
 
-        embed = self._build_check_embed(user_or_role, "whitelist", ctx.guild, is_listed, reason)
+        payload = self._build_v2_check_payload(user_or_role, "whitelist", ctx.guild, is_listed, reason)
         view = CheckUserView(self, ctx, user_or_role, "whitelist", ctx.guild, is_listed, reason)
-        view.msg = await ctx.send(embed=embed, view=view)
+        view.msg = await ctx.send(**payload, view=view)
 
     @local_allowlist.command(name="add")
     async def local_allowlist_add(self, ctx: commands.Context, users_or_roles: commands.Greedy[Union[discord.Member, discord.Role]], *, reason: Optional[str] = None) -> None:
