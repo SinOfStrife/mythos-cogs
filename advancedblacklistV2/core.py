@@ -8,13 +8,13 @@ import logging
 from typing import Dict, Final, List, Literal, Optional, Tuple, Union
 
 import discord
+from discord.http import Route
 from redbot.core import Config, commands
 from redbot.core.bot import Red
 
 from .patching import Patch
 from .utils import (
     Cache,
-    CheckUserView,
     ConfirmView,
     FormatView,
     Menu,
@@ -160,7 +160,12 @@ class AdvancedBlacklistV2(commands.Cog):
                 self._cache.clear_blacklist(g_obj)
                 self._cache.clear_whitelist(g_obj)
 
-    # --- Isolated Logging Helper (Components V2) ---
+    # --- REST API Routing & Low-Level Helpers ---
+
+    async def _send_raw_v2_payload(self, channel_id: int, payload: dict) -> None:
+        """Send a raw Components V2 payload via Discord REST API route."""
+        route = Route("POST", "/channels/{channel_id}/messages", channel_id=channel_id)
+        await self.bot.http.request(route, json=payload)
 
     async def _log_action(
         self,
@@ -204,9 +209,7 @@ class AdvancedBlacklistV2(commands.Cog):
             ]
         }
         with contextlib.suppress(discord.HTTPException):
-            await channel.send(**payload)
-
-    # --- Core Helpers & Protections ---
+            await self._send_raw_v2_payload(channel.id, payload)
 
     def _build_v2_check_payload(
         self,
@@ -241,6 +244,8 @@ class AdvancedBlacklistV2(commands.Cog):
                 }
             ]
         }
+
+    # --- Core Helpers & Protections ---
 
     async def _filter_self_harm(
         self, ctx: commands.Context, targets: UsersOrRoles, white_black_list: _WhiteBlacklist, guild: Optional[discord.Guild]
@@ -429,15 +434,18 @@ class AdvancedBlacklistV2(commands.Cog):
 
     @blocklist.command(name="check")
     async def blocklist_check(self, ctx: commands.Context, user_or_role: discord.User) -> None:
-        """Inspect a user's status with interactive action row buttons."""
+        """Inspect a user's status on the global blocklist."""
         data = await self.get_list(white_black_list="blacklist", guild=None)
         actual = str(user_or_role.id)
         is_listed = actual in data
         reason = data.get(actual, "None")
 
         payload = self._build_v2_check_payload(user_or_role, "blacklist", None, is_listed, reason)
-        view = CheckUserView(self, ctx, user_or_role, "blacklist", None, is_listed, reason)
-        view.msg = await ctx.channel.send(**payload, view=view)
+        try:
+            await self._send_raw_v2_payload(ctx.channel.id, payload)
+        except discord.HTTPException as error:
+            log.exception("Failed to send V2 blocklist check payload for user %s", user_or_role.id)
+            await ctx.send(f"Failed to deliver check layout: `{error}`")
 
     @blocklist.command(name="add")
     async def blocklist_add(self, ctx: commands.Context, users: commands.Greedy[discord.User], *, reason: Optional[str] = None) -> None:
@@ -527,15 +535,18 @@ class AdvancedBlacklistV2(commands.Cog):
 
     @local_blocklist.command(name="check")
     async def local_blocklist_check(self, ctx: commands.Context, user_or_role: Union[discord.Member, discord.Role]) -> None:
-        """Inspect a local member's status with interactive action row buttons."""
+        """Inspect a local member or role's status on the local blocklist."""
         data = await self.get_list(white_black_list="blacklist", guild=ctx.guild)
         actual = str(user_or_role.id)
         is_listed = actual in data
         reason = data.get(actual, "None")
 
         payload = self._build_v2_check_payload(user_or_role, "blacklist", ctx.guild, is_listed, reason)
-        view = CheckUserView(self, ctx, user_or_role, "blacklist", ctx.guild, is_listed, reason)
-        view.msg = await ctx.channel.send(**payload, view=view)
+        try:
+            await self._send_raw_v2_payload(ctx.channel.id, payload)
+        except discord.HTTPException as error:
+            log.exception("Failed to send V2 local blocklist check payload for ID %s", user_or_role.id)
+            await ctx.send(f"Failed to deliver check layout: `{error}`")
 
     @local_blocklist.command(name="add")
     async def local_blocklist_add(self, ctx: commands.Context, users_or_roles: commands.Greedy[Union[discord.Member, discord.Role]], *, reason: Optional[str] = None) -> None:
@@ -608,15 +619,18 @@ class AdvancedBlacklistV2(commands.Cog):
 
     @allowlist.command(name="check")
     async def allowlist_check(self, ctx: commands.Context, user: discord.User) -> None:
-        """Inspect a user's global allowlist status."""
+        """Inspect a user's status on the global allowlist."""
         data = await self.get_list(white_black_list="whitelist", guild=None)
         actual = str(user.id)
         is_listed = actual in data
         reason = data.get(actual, "None")
 
         payload = self._build_v2_check_payload(user, "whitelist", None, is_listed, reason)
-        view = CheckUserView(self, ctx, user, "whitelist", None, is_listed, reason)
-        view.msg = await ctx.channel.send(**payload, view=view)
+        try:
+            await self._send_raw_v2_payload(ctx.channel.id, payload)
+        except discord.HTTPException as error:
+            log.exception("Failed to send V2 allowlist check payload for user %s", user.id)
+            await ctx.send(f"Failed to deliver check layout: `{error}`")
 
     @allowlist.command(name="add")
     async def allowlist_add(self, ctx: commands.Context, users: commands.Greedy[discord.User], *, reason: Optional[str] = None) -> None:
@@ -690,15 +704,18 @@ class AdvancedBlacklistV2(commands.Cog):
 
     @local_allowlist.command(name="check")
     async def local_allowlist_check(self, ctx: commands.Context, user_or_role: Union[discord.Member, discord.Role]) -> None:
-        """Inspect a member or role's local allowlist status."""
+        """Inspect a member or role's status on the local allowlist."""
         data = await self.get_list(white_black_list="whitelist", guild=ctx.guild)
         actual = str(user_or_role.id)
         is_listed = actual in data
         reason = data.get(actual, "None")
 
         payload = self._build_v2_check_payload(user_or_role, "whitelist", ctx.guild, is_listed, reason)
-        view = CheckUserView(self, ctx, user_or_role, "whitelist", ctx.guild, is_listed, reason)
-        view.msg = await ctx.channel.send(**payload, view=view)
+        try:
+            await self._send_raw_v2_payload(ctx.channel.id, payload)
+        except discord.HTTPException as error:
+            log.exception("Failed to send V2 local allowlist check payload for ID %s", user_or_role.id)
+            await ctx.send(f"Failed to deliver check layout: `{error}`")
 
     @local_allowlist.command(name="add")
     async def local_allowlist_add(self, ctx: commands.Context, users_or_roles: commands.Greedy[Union[discord.Member, discord.Role]], *, reason: Optional[str] = None) -> None:
