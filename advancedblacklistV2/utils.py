@@ -5,15 +5,12 @@ from __future__ import annotations
 
 import datetime
 from contextlib import suppress
-from typing import TYPE_CHECKING, Any, Callable, Dict, Final, Iterable, List, Literal, Optional, Union
+from typing import Any, Callable, Dict, Final, Iterable, List, Literal, Optional, Union
 
 import discord
 from discord.ui.button import button as button_dec
 from redbot.core import Config, commands
 from redbot.core.bot import Red
-
-if TYPE_CHECKING:
-    from .core import AdvancedBlacklistV2
 
 _WhiteBlacklist = Literal["whitelist", "blacklist"]
 UserOrRole = Union[discord.Member, discord.User, discord.Role, int]
@@ -88,145 +85,6 @@ class Cache:
             self.__bl_internal["guild"][guild.id] = {}
             return
         self.__bl_internal["global"] = {}
-
-
-# --- Interactive Modals ---
-
-class ReasonModal(discord.ui.Modal):
-    def __init__(self, current_reason: str, on_submit_coro: Callable[[str], Any]):
-        super().__init__(title="Edit Reason")
-        self.on_submit_coro = on_submit_coro
-        self.reason_input = discord.ui.TextInput(
-            label="New Reason",
-            style=discord.TextStyle.paragraph,
-            default=current_reason if current_reason != "No reason provided." else "",
-            placeholder="Provide a reason...",
-            required=True,
-            max_length=500,
-        )
-        self.add_item(self.reason_input)
-
-    async def on_submit(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer()
-        await self.on_submit_coro(self.reason_input.value.strip())
-
-
-class BlacklistModal(discord.ui.Modal):
-    def __init__(self, target_name: str, on_submit_coro: Callable[[str], Any]):
-        super().__init__(title=f"Add {target_name[:30]}")
-        self.on_submit_coro = on_submit_coro
-        self.reason_input = discord.ui.TextInput(
-            label="Reason",
-            style=discord.TextStyle.paragraph,
-            placeholder="Why is this user being added?",
-            required=False,
-            max_length=500,
-        )
-        self.add_item(self.reason_input)
-
-    async def on_submit(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer()
-        reason = self.reason_input.value.strip() or "No reason provided."
-        await self.on_submit_coro(reason)
-
-
-# --- Dynamic Check Card View (Owner / Admin Only) ---
-
-class CheckUserView(discord.ui.View):
-    def __init__(
-        self,
-        cog: AdvancedBlacklistV2,
-        ctx: commands.Context,
-        target: UserOrRole,
-        white_black_list: _WhiteBlacklist,
-        guild: Optional[discord.Guild],
-        is_listed: bool,
-        reason: str,
-    ):
-        super().__init__(timeout=120.0)
-        self.cog = cog
-        self.ctx = ctx
-        self.target = target
-        self.white_black_list = white_black_list
-        self.guild = guild
-        self.is_listed = is_listed
-        self.reason = reason
-        self.msg: Optional[discord.Message] = None
-        self._update_buttons()
-
-    def _update_buttons(self) -> None:
-        self.clear_items()
-        action_name = "Allowlist" if self.white_black_list == "whitelist" else "Blocklist"
-
-        if self.is_listed:
-            edit_btn = discord.ui.Button(label="Edit Reason", style=discord.ButtonStyle.green, custom_id="edit_reason")
-            edit_btn.callback = self._on_edit_reason
-            self.add_item(edit_btn)
-
-            remove_btn = discord.ui.Button(label=f"Remove from {action_name}", style=discord.ButtonStyle.red, custom_id="remove_list")
-            remove_btn.callback = self._on_remove
-            self.add_item(remove_btn)
-        else:
-            add_btn = discord.ui.Button(label=f"Add to {action_name}", style=discord.ButtonStyle.red, custom_id="add_list")
-            add_btn.callback = self._on_add
-            self.add_item(add_btn)
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if self.guild:
-            if not getattr(interaction.user.guild_permissions, "administrator", False):
-                await interaction.response.send_message("You are not authorized to use these buttons.", ephemeral=True)
-                return False
-        else:
-            if not await self.cog.bot.is_owner(interaction.user):
-                await interaction.response.send_message("You are not authorized to use these buttons.", ephemeral=True)
-                return False
-        return True
-
-    async def _on_edit_reason(self, interaction: discord.Interaction) -> None:
-        async def submit_callback(new_reason: str):
-            await self.cog.edit_reason(self.target, white_black_list=self.white_black_list, reason=new_reason, guild=self.guild)
-            await self.cog._log_action("Edited Reason", self.target, self.white_black_list, new_reason, interaction.user, self.guild)
-            self.reason = new_reason
-            await self._refresh_card(interaction)
-
-        modal = ReasonModal(self.reason, submit_callback)
-        await interaction.response.send_modal(modal)
-
-    async def _on_remove(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer()
-        await self.cog.remove_from_list({self.target}, white_black_list=self.white_black_list, guild=self.guild)
-        await self.cog._log_action("Removed (Button)", self.target, self.white_black_list, "Removed via check card", interaction.user, self.guild)
-        self.is_listed = False
-        self.reason = "None"
-        self._update_buttons()
-        await self._refresh_card(interaction)
-
-    async def _on_add(self, interaction: discord.Interaction) -> None:
-        target_name = getattr(self.target, "name", str(self.target))
-
-        async def submit_callback(reason: str):
-            await self.cog.add_to_list({self.target}, white_black_list=self.white_black_list, reason=reason, guild=self.guild)
-            await self.cog._log_action("Added (Button)", self.target, self.white_black_list, reason, interaction.user, self.guild)
-            self.is_listed = True
-            self.reason = reason
-            self._update_buttons()
-            await self._refresh_card(interaction)
-
-        modal = BlacklistModal(target_name, submit_callback)
-        await interaction.response.send_modal(modal)
-
-    async def _refresh_card(self, interaction: Optional[discord.Interaction] = None) -> None:
-        embed = self.cog._build_check_embed(self.target, self.white_black_list, self.guild, self.is_listed, self.reason)
-        target_msg = self.msg or getattr(interaction, "message", None)
-        if target_msg:
-            with suppress(discord.HTTPException):
-                await target_msg.edit(embed=embed, view=self)
-
-    async def on_timeout(self) -> None:
-        self.stop()
-        if self.msg:
-            with suppress(discord.HTTPException):
-                await self.msg.edit(view=None)
 
 
 # --- Confirmation & Pagination Views ---
