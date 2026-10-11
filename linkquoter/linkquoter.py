@@ -88,8 +88,8 @@ class QuoteDeleteView(discord.ui.View):
 class LinkQuoter(commands.Cog):
     """Quotes Discord message links with rich previews, thread support, and flexible cross-server security."""
 
-    __author__ = ["SinOfStrife"]
-    __version__ = "3.1.0"
+    __author__ = ["PhenoM4n4n", "AAA3A", "SinOfStrife"]
+    __version__ = "3.1.1"
     __red_end_user_data_statement__ = "This cog does not persistently store personal data about users."
 
     def __init__(self, bot: Red):
@@ -459,7 +459,15 @@ class LinkQuoter(commands.Cog):
         guild_cache = self._get_cache(ctx.guild.id)
         await self.config.guild(ctx.guild).cross_guild_mode.set(mode)
         guild_cache["cross_guild_mode"] = mode
-        await ctx.send(f"Cross-server quoting mode has been set to **{mode}**.")
+        
+        if mode == "public":
+            await ctx.send(
+                "⚠️ **Cross-server mode set to PUBLIC.**\n"
+                "Any other public server can now quote messages from this guild. "
+                "Ensure private channels are hidden from the bot or ignored using `[p]linkquoteset ignorechannel`."
+            )
+        else:
+            await ctx.send(f"Cross-server quoting mode has been set to **{mode}**.")
 
     @linkquoteset.command(name="whitelist")
     async def linkquoteset_whitelist(self, ctx: commands.Context, server_id: int) -> None:
