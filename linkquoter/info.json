@@ -4,7 +4,7 @@
     ],
     "name": "LinkQuoter",
     "short": "Quotes Discord message links with rich previews, persistent delete buttons, and flexible cross-server modes.",
-    "description": "Automatically or manually quotes Discord message links into rich embeds with thread breadcrumbs, persistent interactive delete controls, and flexible cross-server security isolation modes. Adapted from LinkQuoter by PhenoM4n4n and AAA3A.",
+    "description": "Automatically or manually quotes Discord message links into rich embeds with thread breadcrumbs, persistent delete controls, and flexible cross-server security modes. Adapted from LinkQuoter by PhenoM4n4n and AAA3A.",
     "install_msg": "Thanks for installing LinkQuoter! Note: Auto-quoting is disabled by default. Use `[p]linkquoteset` to configure server settings or `[p]linkquote <url>` to quote manually.",
     "tags": ["utility", "quote", "messages"],
     "min_bot_version": "3.5.0",
