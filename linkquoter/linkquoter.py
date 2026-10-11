@@ -24,12 +24,14 @@ LINK_REGEX = re.compile(
 
 
 def _clip(text: str, limit: int = 4000) -> str:
+    """Clips text safely to stay within Discord embed limits."""
     if len(text) <= limit:
         return text
     return text[: limit - 1] + "…" if limit > 1 else text[:limit]
 
 
 def _is_nsfw(channel: Union[discord.abc.GuildChannel, discord.Thread]) -> bool:
+    """Accurately checks NSFW status, including threads that inherit from parent channels."""
     if isinstance(channel, discord.Thread):
         parent = channel.parent
         return bool(parent and getattr(parent, "is_nsfw", lambda: False)())
@@ -39,6 +41,8 @@ def _is_nsfw(channel: Union[discord.abc.GuildChannel, discord.Thread]) -> bool:
 
 
 class QuoteDeleteView(discord.ui.View):
+    """Persistent interactive view allowing delete button interaction across reboots."""
+
     def __init__(self, invoker_id: Optional[int] = None):
         super().__init__(timeout=None)
         self.invoker_id = invoker_id
@@ -77,8 +81,10 @@ class QuoteDeleteView(discord.ui.View):
 
 
 class LinkQuoter(commands.Cog):
+    """Quotes Discord message links with rich previews, thread support, and flexible cross-server security."""
+
     __author__ = ["SinOfStrife"]
-    __version__ = "3.1.6"
+    __version__ = "3.2.0"
     __red_end_user_data_statement__ = "This cog does not persistently store personal data about users."
 
     def __init__(self, bot: Red):
@@ -88,10 +94,11 @@ class LinkQuoter(commands.Cog):
         default_guild = {
             "enabled": False,
             "delete_original": False,
-            "cross_guild_mode": "off",
+            "cross_guild_mode": "off",  # "off", "whitelist", "public"
             "cross_guild_whitelist": [],
             "ignored_channels": [],
             "ignored_roles": [],
+            "allowed_roles": [],
         }
         self.config.register_guild(**default_guild)
 
@@ -100,6 +107,7 @@ class LinkQuoter(commands.Cog):
         self.persistent_view_added = False
 
     def _get_cache(self, guild_id: int) -> Dict[str, Any]:
+        """Safely retrieves guild settings with guaranteed default values."""
         return self._cache.setdefault(guild_id, {
             "enabled": False,
             "delete_original": False,
@@ -107,9 +115,11 @@ class LinkQuoter(commands.Cog):
             "cross_guild_whitelist": set(),
             "ignored_channels": set(),
             "ignored_roles": set(),
+            "allowed_roles": set(),
         })
 
     async def cog_load(self) -> None:
+        """Loads configuration into RAM synchronously before listeners handle traffic."""
         await self._build_cache()
         if not self.persistent_view_added:
             self.bot.add_view(QuoteDeleteView())
@@ -125,6 +135,7 @@ class LinkQuoter(commands.Cog):
                 "cross_guild_whitelist": set(data.get("cross_guild_whitelist", [])),
                 "ignored_channels": set(data.get("ignored_channels", [])),
                 "ignored_roles": set(data.get("ignored_roles", [])),
+                "allowed_roles": set(data.get("allowed_roles", [])),
             }
 
     async def red_get_data_for_user(self, *, user_id: int) -> dict:
@@ -139,6 +150,7 @@ class LinkQuoter(commands.Cog):
         return
 
     async def _send_error(self, ctx: commands.Context, title: str, description: str) -> None:
+        """Sends an error embed with a clean plaintext fallback that self-deletes after 12 seconds."""
         can_embed = ctx.channel.permissions_for(ctx.me).embed_links
         if can_embed:
             embed = discord.Embed(title=f"🛑 {title}", description=description, color=discord.Color.red())
@@ -164,6 +176,7 @@ class LinkQuoter(commands.Cog):
         if not target_guild:
             return None, "That message link belongs to a server I am not in."
 
+        # Cross-Server Mode Validation
         if target_guild.id != dest_channel.guild.id:
             dest_cache = self._get_cache(dest_channel.guild.id)
             source_cache = self._get_cache(target_guild.id)
@@ -189,22 +202,27 @@ class LinkQuoter(commands.Cog):
             except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                 return None, "I could not find the channel or thread that message was sent in."
 
+        # Anti-Spoofing Check
         if getattr(target_channel, "guild", None) is None or target_channel.guild.id != target_guild.id:
             return None, "The channel in that link does not belong to the specified server."
 
+        # NSFW Quarantine Check
         if _is_nsfw(target_channel) and not _is_nsfw(dest_channel):
             return None, "Messages from NSFW channels cannot be quoted in non-NSFW channels."
 
+        # Source Bot Permissions Check
         bot_perms = target_channel.permissions_for(target_guild.me)
         if not (bot_perms.read_messages and bot_perms.read_message_history):
             return None, "I do not have permission to read messages in that channel."
 
+        # Same-server quotes strictly enforce user read permissions to protect private channels
         if target_guild.id == dest_channel.guild.id:
             author_member = requester
             author_perms = target_channel.permissions_for(author_member)
             if not (author_perms.read_messages and author_perms.read_message_history):
                 return None, "You do not have permission to view the channel that message was sent in."
 
+        # Message retrieval with public cache verification
         message = discord.utils.get(self.bot.cached_messages, id=message_id)
         if not message:
             try:
@@ -228,6 +246,7 @@ class LinkQuoter(commands.Cog):
         embed_color = color or (message.author.color if getattr(message.author.color, "value", 0) != 0 else discord.Color.blurple())
         embed = discord.Embed(color=embed_color, timestamp=message.created_at)
 
+        # Thread & Forum Context Breadcrumbs
         channel = message.channel
         if isinstance(channel, discord.Thread):
             parent_name = channel.parent.name if channel.parent else "Unknown"
@@ -242,6 +261,7 @@ class LinkQuoter(commands.Cog):
 
         embed.set_author(name=f"{message.author.display_name} said...", icon_url=message.author.display_avatar.url, url=message.jump_url)
 
+        # Description Formulation (Preserves User Commentary with explicit identity)
         description_parts = []
         if commentary:
             name_tag = f"**{commenter.display_name}:** " if commenter else ""
@@ -253,6 +273,7 @@ class LinkQuoter(commands.Cog):
 
         embed.description = "\n\n".join(description_parts) if description_parts else "*[Click link below to view contents]*"
 
+        # Media Attachments with spoiler detection
         image_url = None
         if message.attachments:
             for att in message.attachments:
@@ -273,6 +294,7 @@ class LinkQuoter(commands.Cog):
             val_text = ", ".join(shown_links) + (f" ... and {rem} more" if rem > 0 else "")
             embed.add_field(name="Attachments", value=val_text, inline=False)
 
+        # Stickers Support
         if not image_url and message.stickers:
             for sticker in message.stickers:
                 if sticker.url:
@@ -280,6 +302,7 @@ class LinkQuoter(commands.Cog):
                     embed.add_field(name="Sticker", value=f"[{sticker.name}]({sticker.url})", inline=False)
                     break
 
+        # Embedded Image Fallbacks
         if not image_url and message.embeds:
             for e in message.embeds:
                 if e.image and e.image.url:
@@ -297,10 +320,12 @@ class LinkQuoter(commands.Cog):
 
     @commands.Cog.listener()
     async def on_guild_remove(self, guild: discord.Guild) -> None:
+        """Prunes RAM cache when the bot is removed from a guild."""
         self._cache.pop(guild.id, None)
 
     @commands.Cog.listener()
     async def on_message_without_command(self, message: discord.Message) -> None:
+        """High-throughput listener for automatic link quoting."""
         if not message.guild or message.author.bot or message.webhook_id:
             return
 
@@ -308,13 +333,21 @@ class LinkQuoter(commands.Cog):
         if not guild_cache.get("enabled", False):
             return
 
+        # Allowed Roles Verification (if set, user must have at least one allowed role)
+        allowed_roles = guild_cache.get("allowed_roles", set())
+        if allowed_roles and not any(role.id in allowed_roles for role in getattr(message.author, "roles", [])):
+            return
+
+        # Ignored Channel & Thread Parent Check
         channel_id_to_check = getattr(message.channel, "parent_id", message.channel.id) or message.channel.id
         if channel_id_to_check in guild_cache.get("ignored_channels", set()) or message.channel.id in guild_cache.get("ignored_channels", set()):
             return
 
+        # Ignored Role Check
         if any(role.id in guild_cache.get("ignored_roles", set()) for role in getattr(message.author, "roles", [])):
             return
 
+        # Suppression & Keyword Checks
         if "no quote" in message.content.lower():
             return
 
@@ -343,6 +376,7 @@ class LinkQuoter(commands.Cog):
         if not target_message:
             return
 
+        # Rate-Limit Check
         bucket = self._cooldown.get_bucket(message)
         if bucket and bucket.update_rate_limit():
             return
@@ -381,6 +415,14 @@ class LinkQuoter(commands.Cog):
         • `[p]linkquote https://discord.com/channels/... check this out!`
         • Reply to any message with: `[p]linkquote`
         """
+        # Allowed Roles Verification for Manual Command
+        guild_cache = self._get_cache(ctx.guild.id)
+        allowed_roles = guild_cache.get("allowed_roles", set())
+        if allowed_roles and not any(role.id in allowed_roles for role in getattr(ctx.author, "roles", [])):
+            if not await ctx.bot.is_owner(ctx.author):
+                await self._send_error(ctx, "Permission Denied", "You do not have the required role to use LinkQuoter.")
+                return
+
         target_text = link_and_commentary or ""
         match = LINK_REGEX.search(target_text)
         commentary = None
@@ -493,7 +535,7 @@ class LinkQuoter(commands.Cog):
     ) -> None:
         """Ignore or un-ignore a channel/thread from automatic link quoting."""
         guild_cache = self._get_cache(ctx.guild.id)
-        ignored = guild_cache.setdefault("ignored_channels", set())
+        ignored: Set[int] = guild_cache.setdefault("ignored_channels", set())
 
         if channel.id in ignored:
             ignored.discard(channel.id)
@@ -504,27 +546,50 @@ class LinkQuoter(commands.Cog):
         else:
             ignored.add(channel.id)
             async with self.config.guild(ctx.guild).ignored_channels() as chs:
-                chs.append(channel.id)
+                if channel.id not in chs:
+                    chs.append(channel.id)
             await ctx.send(f"Auto-quoting will now ignore links in {channel.mention} (and any threads inside it).")
 
     @linkquoteset.command(name="ignorerole")
     async def linkquoteset_ignorerole(self, ctx: commands.Context, role: discord.Role) -> None:
         """Ignore or un-ignore a role from automatic link quoting."""
         guild_cache = self._get_cache(ctx.guild.id)
-        ignored = guild_cache.setdefault("ignored_roles", set())
+        ignored: Set[int] = guild_cache.setdefault("ignored_roles", set())
 
         if role.id in ignored:
             ignored.discard(role.id)
             async with self.config.guild(ctx.guild).ignored_roles() as rls:
                 if role.id in rls:
                     rls.remove(role.id)
-            await ctx.send(f"Auto-quoting will now process links from members with the **{role.name}** role.")
+            await ctx.send(f"Auto-quoting will now process links from roles named **{role.name}**.")
         else:
             ignored.add(role.id)
             async with self.config.guild(ctx.guild).ignored_roles() as rls:
                 if role.id not in rls:
                     rls.append(role.id)
-            await ctx.send(f"Auto-quoting will now ignore links from members with the **{role.name}** role.")
+            await ctx.send(f"Auto-quoting will now ignore links from roles named **{role.name}**.")
+
+    @linkquoteset.command(name="allowrole")
+    async def linkquoteset_allowrole(self, ctx: commands.Context, role: discord.Role) -> None:
+        """Allow or un-allow a role to use LinkQuoter (restricts quoting to these roles)."""
+        guild_cache = self._get_cache(ctx.guild.id)
+        allowed: Set[int] = guild_cache.setdefault("allowed_roles", set())
+
+        if role.id in allowed:
+            allowed.discard(role.id)
+            async with self.config.guild(ctx.guild).allowed_roles() as rls:
+                if role.id in rls:
+                    rls.remove(role.id)
+            await ctx.send(f"Removed **{role.name}** from the allowed roles list.")
+        else:
+            allowed.add(role.id)
+            async with self.config.guild(ctx.guild).allowed_roles() as rls:
+                if role.id not in rls:
+                    rls.append(role.id)
+            await ctx.send(
+                f"Added **{role.name}** to the allowed roles list.\n"
+                f"*(Only members with allowed roles can quote links when this list is not empty).*"
+            )
 
     @linkquoteset.command(name="settings", aliases=["showsettings"])
     async def linkquoteset_settings(self, ctx: commands.Context) -> None:
@@ -536,9 +601,11 @@ class LinkQuoter(commands.Cog):
         whitelisted = data.get("cross_guild_whitelist", set())
         ignored_chs = data.get("ignored_channels", set())
         ignored_rls = data.get("ignored_roles", set())
+        allowed_rls = data.get("allowed_roles", set())
 
         ch_text = ", ".join(f"<#{cid}>" for cid in ignored_chs) if ignored_chs else "None"
         role_text = ", ".join(f"<@&{rid}>" for rid in ignored_rls) if ignored_rls else "None"
+        allowed_role_text = ", ".join(f"<@&{rid}>" for rid in allowed_rls) if allowed_rls else "All Roles (Open)"
         wl_text = ", ".join(f"`{gid}`" for gid in whitelisted) if whitelisted else "None"
 
         can_embed = ctx.channel.permissions_for(ctx.me).embed_links
@@ -548,6 +615,7 @@ class LinkQuoter(commands.Cog):
             embed.add_field(name="Delete Original Link", value="Enabled" if delete_orig else "Disabled", inline=True)
             embed.add_field(name="Cross-Server Mode", value=mode.capitalize(), inline=True)
             embed.add_field(name="Server Whitelist", value=_clip(wl_text, 1024), inline=False)
+            embed.add_field(name="Allowed Roles", value=_clip(allowed_role_text, 1024), inline=False)
             embed.add_field(name="Ignored Channels", value=_clip(ch_text, 1024), inline=False)
             embed.add_field(name="Ignored Roles", value=_clip(role_text, 1024), inline=False)
             await ctx.send(embed=embed)
@@ -557,8 +625,9 @@ class LinkQuoter(commands.Cog):
                 f"• Auto-Quoting: {'Enabled' if enabled else 'Disabled'}\n"
                 f"• Delete Original Link: {'Enabled' if delete_orig else 'Disabled'}\n"
                 f"• Cross-Server Mode: {mode.capitalize()}\n"
-                f"• Server Whitelist: {_clip(wl_text, 300)}\n"
-                f"• Ignored Channels: {_clip(ch_text, 300)}\n"
-                f"• Ignored Roles: {_clip(role_text, 300)}"
+                f"• Server Whitelist: {_clip(wl_text, 250)}\n"
+                f"• Allowed Roles: {_clip(allowed_role_text, 250)}\n"
+                f"• Ignored Channels: {_clip(ch_text, 250)}\n"
+                f"• Ignored Roles: {_clip(role_text, 250)}"
             )
             await ctx.send(_clip(msg, 1900))
