@@ -97,7 +97,7 @@ class LinkQuoter(commands.Cog):
     """Quotes Discord message links with rich previews, thread support, and flexible cross-server security."""
 
     __author__ = ["SinOfStrife"]
-    __version__ = "3.3.0"
+    __version__ = "3.3.1"
     __red_end_user_data_statement__ = "This cog does not persistently store personal data about users."
 
     def __init__(self, bot: Red):
@@ -284,7 +284,9 @@ class LinkQuoter(commands.Cog):
         if body_text:
             if _is_spoiler_channel(message.channel):
                 body_text = f"||\n{body_text}\n||"
-            description_parts.append(f">>> {_clip(body_text, 3500)}")
+                description_parts.append(_clip(body_text, 3500))
+            else:
+                description_parts.append(f">>> {_clip(body_text, 3500)}")
 
         embed.description = "\n\n".join(description_parts) if description_parts else "*[Click link below to view contents]*"
 
