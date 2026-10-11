@@ -4,9 +4,11 @@
 # Licensed under MIT
 
 from redbot.core.bot import Red
+from redbot.core.utils import get_end_user_data_statement
 from .linkquoter import LinkQuoter
+
+__red_end_user_data_statement__ = get_end_user_data_statement(__file__)
 
 
 async def setup(bot: Red) -> None:
-    cog = LinkQuoter(bot)
-    await bot.add_cog(cog)
+    await bot.add_cog(LinkQuoter(bot))
