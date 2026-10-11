@@ -40,6 +40,19 @@ def _is_nsfw(channel: Union[discord.abc.GuildChannel, discord.Thread]) -> bool:
     return bool(getattr(channel, "nsfw", False))
 
 
+def _is_spoiler_channel(channel: Union[discord.abc.GuildChannel, discord.Thread]) -> bool:
+    """Accurately checks if a channel or its parent thread is a designated spoiler channel using channel flags."""
+    if isinstance(channel, discord.Thread):
+        parent = channel.parent
+        if parent and hasattr(parent, "flags"):
+            return bool(parent.flags.is_spoiler_channel)
+        return False
+    
+    if hasattr(channel, "flags"):
+        return bool(channel.flags.is_spoiler_channel)
+    return False
+
+
 class QuoteDeleteView(discord.ui.View):
     """Persistent interactive view allowing delete button interaction across reboots."""
 
@@ -84,7 +97,7 @@ class LinkQuoter(commands.Cog):
     """Quotes Discord message links with rich previews, thread support, and flexible cross-server security."""
 
     __author__ = ["SinOfStrife"]
-    __version__ = "3.2.0"
+    __version__ = "3.3.0"
     __red_end_user_data_statement__ = "This cog does not persistently store personal data about users."
 
     def __init__(self, bot: Red):
@@ -269,6 +282,8 @@ class LinkQuoter(commands.Cog):
 
         body_text = message.content or getattr(message, "system_content", "")
         if body_text:
+            if _is_spoiler_channel(message.channel):
+                body_text = f"||\n{body_text}\n||"
             description_parts.append(f">>> {_clip(body_text, 3500)}")
 
         embed.description = "\n\n".join(description_parts) if description_parts else "*[Click link below to view contents]*"
@@ -600,11 +615,11 @@ class LinkQuoter(commands.Cog):
         mode = data.get("cross_guild_mode", "off")
         whitelisted = data.get("cross_guild_whitelist", set())
         ignored_chs = data.get("ignored_channels", set())
-        ignored_rls = data.get("ignored_roles", set())
+        ignored_roles_set = data.get("ignored_roles", set())
         allowed_rls = data.get("allowed_roles", set())
 
         ch_text = ", ".join(f"<#{cid}>" for cid in ignored_chs) if ignored_chs else "None"
-        role_text = ", ".join(f"<@&{rid}>" for rid in ignored_rls) if ignored_rls else "None"
+        role_text = ", ".join(f"<@&{rid}>" for rid in ignored_roles_set) if ignored_roles_set else "None"
         allowed_role_text = ", ".join(f"<@&{rid}>" for rid in allowed_rls) if allowed_rls else "All Roles (Open)"
         wl_text = ", ".join(f"`{gid}`" for gid in whitelisted) if whitelisted else "None"
 
