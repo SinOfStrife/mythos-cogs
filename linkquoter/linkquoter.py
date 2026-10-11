@@ -16,16 +16,16 @@ from redbot.core.bot import Red
 
 log = logging.getLogger("red.strifecogs.linkquoter")
 
-# Matches standard message links while ignoring markdown-wrapped URLs [text](url)
+# Matches standard message links, capturing @me for DMs while ignoring markdown-wrapped URLs [text](url)
 LINK_REGEX = re.compile(
     r"(?<!\]\()https?:\/\/(?:(?:ptb|canary)\.)?discord(?:app)?\.com\/channels\/"
-    r"(?P<guild_id>[0-9]{15,21})\/(?P<channel_id>[0-9]{15,21})\/(?P<message_id>[0-9]{15,21})\/?",
+    r"(?P<guild_id>@me|[0-9]{15,21})\/(?P<channel_id>[0-9]{15,21})\/(?P<message_id>[0-9]{15,21})\/?",
     re.IGNORECASE,
 )
 
 SUPPRESSED_REGEX = re.compile(
     r"<https?:\/\/(?:(?:ptb|canary)\.)?discord(?:app)?\.com\/channels\/"
-    r"[0-9]{15,21}\/[0-9]{15,21}\/[0-9]{15,21}\/?>",
+    r"(?:@me|[0-9]{15,21})\/[0-9]{15,21}\/[0-9]{15,21}\/?>",
     re.IGNORECASE,
 )
 
@@ -89,7 +89,7 @@ class LinkQuoter(commands.Cog):
     """Quotes Discord message links with rich previews, thread support, and flexible cross-server security."""
 
     __author__ = ["PhenoM4n4n", "AAA3A", "SinOfStrife"]
-    __version__ = "3.1.1"
+    __version__ = "3.1.3"
     __red_end_user_data_statement__ = "This cog does not persistently store personal data about users."
 
     def __init__(self, bot: Red):
@@ -161,12 +161,16 @@ class LinkQuoter(commands.Cog):
         self,
         requester: discord.Member,
         dest_channel: Union[discord.abc.GuildChannel, discord.Thread],
-        guild_id: int,
+        guild_id_str: str,
         channel_id: int,
         message_id: int,
         *,
         is_manual: bool = False,
     ) -> Tuple[Optional[discord.Message], Optional[str]]:
+        if guild_id_str.lower() == "@me":
+            return None, "I can only quote messages from servers, not direct messages."
+
+        guild_id = int(guild_id_str)
         target_guild = self.bot.get_guild(guild_id)
         if not target_guild:
             return None, "That message link belongs to a server I am not in."
@@ -352,12 +356,12 @@ class LinkQuoter(commands.Cog):
         if not target_match:
             return
 
-        guild_id = int(target_match.group("guild_id"))
+        guild_id_str = target_match.group("guild_id")
         channel_id = int(target_match.group("channel_id"))
         message_id = int(target_match.group("message_id"))
 
         target_message, _ = await self._fetch_and_validate(
-            message.author, message.channel, guild_id, channel_id, message_id, is_manual=False
+            message.author, message.channel, guild_id_str, channel_id, message_id, is_manual=False
         )
         if not target_message:
             return
@@ -412,12 +416,12 @@ class LinkQuoter(commands.Cog):
             await self._send_error(ctx, "Missing Link", "Please provide a valid message link or reply to a message.")
             return
 
-        guild_id = int(match.group("guild_id"))
+        guild_id_str = match.group("guild_id")
         channel_id = int(match.group("channel_id"))
         message_id = int(match.group("message_id"))
 
         target_message, error_msg = await self._fetch_and_validate(
-            ctx.author, ctx.channel, guild_id, channel_id, message_id, is_manual=True
+            ctx.author, ctx.channel, guild_id_str, channel_id, message_id, is_manual=True
         )
         if not target_message:
             await self._send_error(ctx, "Quote Failed", error_msg or "Could not retrieve that message.")
