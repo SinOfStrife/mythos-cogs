@@ -78,7 +78,7 @@ class QuoteDeleteView(discord.ui.View):
 
 class LinkQuoter(commands.Cog):
     __author__ = ["SinOfStrife"]
-    __version__ = "3.1.4"
+    __version__ = "3.1.5"
     __red_end_user_data_statement__ = "This cog does not persistently store personal data about users."
 
     def __init__(self, bot: Red):
@@ -369,6 +369,18 @@ class LinkQuoter(commands.Cog):
     @commands.bot_has_permissions(send_messages=True, embed_links=True)
     @commands.command(name="linkquote", aliases=["lq", "quote"])
     async def linkquote(self, ctx: commands.Context, *, link_and_commentary: Optional[str] = None) -> None:
+        """Quote a Discord message link or replied message.
+
+        You can either provide a direct message link, or reply to a message and run this command. You can also add your own commentary text alongside the link.
+
+        **Arguments:**
+        • `[link_and_commentary]`: A Discord message link, optionally followed by your own commentary text. If omitted, you must reply to a message.
+
+        **Examples:**
+        • `[p]linkquote https://discord.com/channels/...`
+        • `[p]linkquote https://discord.com/channels/... check this out!`
+        • Reply to any message with: `[p]linkquote`
+        """
         target_text = link_and_commentary or ""
         match = LINK_REGEX.search(target_text)
         commentary = None
@@ -481,7 +493,7 @@ class LinkQuoter(commands.Cog):
     ) -> None:
         """Ignore or un-ignore a channel/thread from automatic link quoting."""
         guild_cache = self._get_cache(ctx.guild.id)
-        ignored: Set[int] = guild_cache.setdefault("ignored_channels", set())
+        ignored = guild_cache.setdefault("ignored_channels", set())
 
         if channel.id in ignored:
             ignored.discard(channel.id)
@@ -492,15 +504,14 @@ class LinkQuoter(commands.Cog):
         else:
             ignored.add(channel.id)
             async with self.config.guild(ctx.guild).ignored_channels() as chs:
-                if channel.id not in chs:
-                    chs.append(channel.id)
+                chs.append(channel.id)
             await ctx.send(f"Auto-quoting will now ignore links in {channel.mention}.")
 
     @linkquoteset.command(name="ignorerole")
     async def linkquoteset_ignorerole(self, ctx: commands.Context, role: discord.Role) -> None:
         """Ignore or un-ignore a role from automatic link quoting."""
         guild_cache = self._get_cache(ctx.guild.id)
-        ignored: Set[int] = guild_cache.setdefault("ignored_roles", set())
+        ignored = guild_cache.setdefault("ignored_roles", set())
 
         if role.id in ignored:
             ignored.discard(role.id)
