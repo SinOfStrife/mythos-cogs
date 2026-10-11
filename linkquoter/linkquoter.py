@@ -16,16 +16,9 @@ from redbot.core.bot import Red
 
 log = logging.getLogger("red.strifecogs.linkquoter")
 
-# Matches standard message links, capturing @me for DMs while ignoring markdown-wrapped URLs [text](url)
 LINK_REGEX = re.compile(
     r"(?<!\]\()https?:\/\/(?:(?:ptb|canary)\.)?discord(?:app)?\.com\/channels\/"
     r"(?P<guild_id>@me|[0-9]{15,21})\/(?P<channel_id>[0-9]{15,21})\/(?P<message_id>[0-9]{15,21})\/?",
-    re.IGNORECASE,
-)
-
-SUPPRESSED_REGEX = re.compile(
-    r"<https?:\/\/(?:(?:ptb|canary)\.)?discord(?:app)?\.com\/channels\/"
-    r"(?:@me|[0-9]{15,21})\/[0-9]{15,21}\/[0-9]{15,21}\/?>",
     re.IGNORECASE,
 )
 
@@ -46,8 +39,6 @@ def _is_nsfw(channel: Union[discord.abc.GuildChannel, discord.Thread]) -> bool:
 
 
 class QuoteDeleteView(discord.ui.View):
-    """Persistent interactive view allowing delete button interaction across reboots."""
-
     def __init__(self, invoker_id: Optional[int] = None):
         super().__init__(timeout=None)
         self.invoker_id = invoker_id
@@ -86,10 +77,8 @@ class QuoteDeleteView(discord.ui.View):
 
 
 class LinkQuoter(commands.Cog):
-    """Quotes Discord message links with rich previews, thread support, and flexible cross-server security."""
-
-    __author__ = ["PhenoM4n4n", "AAA3A", "SinOfStrife"]
-    __version__ = "3.1.3"
+    __author__ = ["SinOfStrife"]
+    __version__ = "3.1.4"
     __red_end_user_data_statement__ = "This cog does not persistently store personal data about users."
 
     def __init__(self, bot: Red):
@@ -99,7 +88,7 @@ class LinkQuoter(commands.Cog):
         default_guild = {
             "enabled": False,
             "delete_original": False,
-            "cross_guild_mode": "off",  # "off", "whitelist", "public"
+            "cross_guild_mode": "off",
             "cross_guild_whitelist": [],
             "ignored_channels": [],
             "ignored_roles": [],
@@ -175,7 +164,6 @@ class LinkQuoter(commands.Cog):
         if not target_guild:
             return None, "That message link belongs to a server I am not in."
 
-        # Flexible Cross-Server Security Mode Evaluation
         if target_guild.id != dest_channel.guild.id:
             dest_cache = self._get_cache(dest_channel.guild.id)
             source_cache = self._get_cache(target_guild.id)
@@ -213,20 +201,9 @@ class LinkQuoter(commands.Cog):
 
         if target_guild.id == dest_channel.guild.id:
             author_member = requester
-        else:
-            author_member = target_guild.get_member(requester.id)
-            if not author_member:
-                try:
-                    author_member = await target_guild.fetch_member(requester.id)
-                except (discord.NotFound, discord.HTTPException):
-                    author_member = None
-
-        if not author_member:
-            return None, "You must be a member of the source server to quote its messages."
-
-        author_perms = target_channel.permissions_for(author_member)
-        if not (author_perms.read_messages and author_perms.read_message_history):
-            return None, "You do not have permission to view the channel that message was sent in."
+            author_perms = target_channel.permissions_for(author_member)
+            if not (author_perms.read_messages and author_perms.read_message_history):
+                return None, "You do not have permission to view the channel that message was sent in."
 
         message = discord.utils.get(self.bot.cached_messages, id=message_id)
         if not message:
@@ -278,9 +255,10 @@ class LinkQuoter(commands.Cog):
 
         image_url = None
         if message.attachments:
-            att = message.attachments[0]
-            if att.filename.lower().endswith(("png", "jpg", "jpeg", "gif", "webp")) and not att.is_spoiler():
-                image_url = att.proxy_url or att.url
+            for att in message.attachments:
+                if att.filename.lower().endswith(("png", "jpg", "jpeg", "gif", "webp")) and not att.is_spoiler():
+                    image_url = att.proxy_url or att.url
+                    break
 
             shown_links = []
             curr_len = 0
@@ -319,7 +297,6 @@ class LinkQuoter(commands.Cog):
 
     @commands.Cog.listener()
     async def on_guild_remove(self, guild: discord.Guild) -> None:
-        """Prunes RAM cache when the bot is removed from a guild."""
         self._cache.pop(guild.id, None)
 
     @commands.Cog.listener()
@@ -434,13 +411,14 @@ class LinkQuoter(commands.Cog):
     @commands.guild_only()
     @commands.admin_or_permissions(manage_guild=True)
     @commands.bot_has_permissions(send_messages=True)
-    @commands.group(name="linkquoteset", aliases=["lqset"])
+    @commands.group(name="linkquoteset", aliases=("lqset",))
     async def linkquoteset(self, ctx: commands.Context) -> None:
         """Manage LinkQuoter settings for this server."""
         pass
 
     @linkquoteset.command(name="toggle")
     async def linkquoteset_toggle(self, ctx: commands.Context) -> None:
+        """Toggle automatic message link quoting in this server."""
         guild_cache = self._get_cache(ctx.guild.id)
         current = guild_cache.get("enabled", False)
         new_state = not current
@@ -450,6 +428,7 @@ class LinkQuoter(commands.Cog):
 
     @linkquoteset.command(name="delete")
     async def linkquoteset_delete(self, ctx: commands.Context) -> None:
+        """Toggle deleting the user's original message after quoting."""
         guild_cache = self._get_cache(ctx.guild.id)
         current = guild_cache.get("delete_original", False)
         new_state = not current
@@ -475,6 +454,7 @@ class LinkQuoter(commands.Cog):
 
     @linkquoteset.command(name="whitelist")
     async def linkquoteset_whitelist(self, ctx: commands.Context, server_id: int) -> None:
+        """Add or remove a companion server ID for mutual cross-server quoting."""
         if server_id == ctx.guild.id:
             await ctx.send("❌ This server is already permitted to quote its own messages by default.")
             return
@@ -499,6 +479,7 @@ class LinkQuoter(commands.Cog):
     async def linkquoteset_ignorechannel(
         self, ctx: commands.Context, channel: Union[discord.abc.GuildChannel, discord.Thread]
     ) -> None:
+        """Ignore or un-ignore a channel/thread from automatic link quoting."""
         guild_cache = self._get_cache(ctx.guild.id)
         ignored: Set[int] = guild_cache.setdefault("ignored_channels", set())
 
@@ -517,6 +498,7 @@ class LinkQuoter(commands.Cog):
 
     @linkquoteset.command(name="ignorerole")
     async def linkquoteset_ignorerole(self, ctx: commands.Context, role: discord.Role) -> None:
+        """Ignore or un-ignore a role from automatic link quoting."""
         guild_cache = self._get_cache(ctx.guild.id)
         ignored: Set[int] = guild_cache.setdefault("ignored_roles", set())
 
@@ -535,6 +517,7 @@ class LinkQuoter(commands.Cog):
 
     @linkquoteset.command(name="settings", aliases=["showsettings"])
     async def linkquoteset_settings(self, ctx: commands.Context) -> None:
+        """Display active LinkQuoter settings for this server."""
         data = self._get_cache(ctx.guild.id)
         enabled = data.get("enabled", False)
         delete_orig = data.get("delete_original", False)
