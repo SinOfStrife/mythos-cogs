@@ -78,7 +78,7 @@ class QuoteDeleteView(discord.ui.View):
 
 class LinkQuoter(commands.Cog):
     __author__ = ["SinOfStrife"]
-    __version__ = "3.1.5"
+    __version__ = "3.1.6"
     __red_end_user_data_statement__ = "This cog does not persistently store personal data about users."
 
     def __init__(self, bot: Red):
@@ -142,9 +142,9 @@ class LinkQuoter(commands.Cog):
         can_embed = ctx.channel.permissions_for(ctx.me).embed_links
         if can_embed:
             embed = discord.Embed(title=f"🛑 {title}", description=description, color=discord.Color.red())
-            await ctx.send(embed=embed)
+            await ctx.send(embed=embed, delete_after=12)
         else:
-            await ctx.send(f"**🛑 {title}**\n{description}")
+            await ctx.send(f"**🛑 {title}**\n{description}", delete_after=12)
 
     async def _fetch_and_validate(
         self,
@@ -505,7 +505,7 @@ class LinkQuoter(commands.Cog):
             ignored.add(channel.id)
             async with self.config.guild(ctx.guild).ignored_channels() as chs:
                 chs.append(channel.id)
-            await ctx.send(f"Auto-quoting will now ignore links in {channel.mention}.")
+            await ctx.send(f"Auto-quoting will now ignore links in {channel.mention} (and any threads inside it).")
 
     @linkquoteset.command(name="ignorerole")
     async def linkquoteset_ignorerole(self, ctx: commands.Context, role: discord.Role) -> None:
@@ -518,13 +518,13 @@ class LinkQuoter(commands.Cog):
             async with self.config.guild(ctx.guild).ignored_roles() as rls:
                 if role.id in rls:
                     rls.remove(role.id)
-            await ctx.send(f"Auto-quoting will now process links from roles named **{role.name}**.")
+            await ctx.send(f"Auto-quoting will now process links from members with the **{role.name}** role.")
         else:
             ignored.add(role.id)
             async with self.config.guild(ctx.guild).ignored_roles() as rls:
                 if role.id not in rls:
                     rls.append(role.id)
-            await ctx.send(f"Auto-quoting will now ignore links from roles named **{role.name}**.")
+            await ctx.send(f"Auto-quoting will now ignore links from members with the **{role.name}** role.")
 
     @linkquoteset.command(name="settings", aliases=["showsettings"])
     async def linkquoteset_settings(self, ctx: commands.Context) -> None:
