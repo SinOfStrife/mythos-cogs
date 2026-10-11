@@ -26,6 +26,7 @@ Quotes Discord message links in chat with embeds, attachments, and delete button
 * Adds a delete button (🗑️) so the person who posted it or a mod can remove it.
 * Shows thread and parent channel names in the footer.
 * Respects channel view permissions and blocks NSFW messages from quoting into SFW channels.
+* All cross-server and auto quote features are **OFF** by default.
 
 ---
 
