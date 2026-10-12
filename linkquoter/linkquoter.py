@@ -1,200 +1,138 @@
+# Copyright (c) 2020-2026 PhenoM4n4n
+# Copyright (c) 2023-2026 AAA3A
+# Copyright (c) 2026 SinOfStrife and Contributors
+# Licensed under MIT
+
 from __future__ import annotations
 
 import asyncio
-import time
-from typing import Any, Literal, Optional
-from urllib.parse import urlparse
+import logging
+import re
+from typing import Any, Dict, List, Literal, Optional, Set, Tuple, Union
 
-import aiohttp
 import discord
-from redbot.core import app_commands, commands
+from redbot.core import Config, commands
 from redbot.core.bot import Red
 
-PK_API = "https://api.pluralkit.me/v2"
-_TITLE_LIMIT = 256
-_DESC_LIMIT = 4096
-_FIELD_LIMIT = 1024
-_MAX_CACHE_ITEMS = 500
+log = logging.getLogger("red.strifecogs.linkquoter")
+
+LINK_REGEX = re.compile(
+    r"(?<!\]\()https?:\/\/(?:(?:ptb|canary)\.)?discord(?:app)?\.com\/channels\/"
+    r"(?P<guild_id>@me|[0-9]{15,21})\/(?P<channel_id>[0-9]{15,21})\/(?P<message_id>[0-9]{15,21})\/?",
+    re.IGNORECASE,
+)
 
 
-def _clip(text: str, limit: int) -> str:
+def _clip(text: str, limit: int = 4000) -> str:
     if len(text) <= limit:
         return text
     return text[: limit - 1] + "…" if limit > 1 else text[:limit]
 
 
-def _member_label(member: dict[str, Any]) -> str:
-    return member.get("display_name") or member.get("name") or "Unknown"
+def _is_nsfw(channel: Union[discord.abc.GuildChannel, discord.Thread]) -> bool:
+    if isinstance(channel, discord.Thread):
+        parent = channel.parent
+        return bool(parent and getattr(parent, "is_nsfw", lambda: False)())
+    if hasattr(channel, "is_nsfw") and callable(channel.is_nsfw):
+        return channel.is_nsfw()
+    return bool(getattr(channel, "nsfw", False))
 
 
-def _embed_color(color_hex: Optional[str]) -> discord.Color:
-    if not color_hex:
-        return discord.Color.default()
-    try:
-        return discord.Color(int(str(color_hex).removeprefix("#"), 16))
-    except ValueError:
-        return discord.Color.default()
-
-
-def _is_valid_url(url: Any) -> bool:
-    if not isinstance(url, str) or not (url.startswith("http://") or url.startswith("https://")):
-        return False
-    parsed = urlparse(url)
-    return bool(parsed.netloc and parsed.scheme in {"http", "https"} and " " not in url)
-
-
-class PKAddAppView(discord.ui.View):
-    """Single link button letting users choose between personal User App or Server install."""
-
-    def __init__(self, oauth_url: str):
+class QuoteDeleteView(discord.ui.View):
+    def __init__(self, invoker_id: Optional[int] = None):
         super().__init__(timeout=None)
-        self.add_item(
-            discord.ui.Button(
-                label="Add PKLens",
-                emoji="➕",
-                style=discord.ButtonStyle.link,
-                url=oauth_url,
-            )
-        )
-
-
-class PKSwitchView(discord.ui.View):
-    """Interactive view allowing 1-click switching between Fronters and System Profile."""
-
-    def __init__(
-        self,
-        cog: PKLens,
-        invoker_id: int,
-        target_user: discord.User | discord.Member,
-        current_view: Literal["fronters", "profile"],
-    ):
-        super().__init__(timeout=120.0)
-        self.cog = cog
         self.invoker_id = invoker_id
-        self.target_user = target_user
-        self.current_view = current_view
-        self._update_button()
-
-    def _update_button(self) -> None:
-        self.clear_items()
-        if self.current_view == "fronters":
-            btn = discord.ui.Button(
-                label="View System Profile",
-                emoji="👤",
-                style=discord.ButtonStyle.secondary,
-                custom_id="pk_switch_profile",
-            )
-            btn.callback = self._on_switch_profile
-            self.add_item(btn)
-        else:
-            btn = discord.ui.Button(
-                label="View Current Fronters",
-                emoji="🟢",
-                style=discord.ButtonStyle.secondary,
-                custom_id="pk_switch_fronters",
-            )
-            btn.callback = self._on_switch_fronters
-            self.add_item(btn)
+        self.message: Optional[discord.Message] = None
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.invoker_id:
+        if self.invoker_id is not None and interaction.user.id == self.invoker_id:
+            return True
+
+        channel = interaction.channel or getattr(interaction.user, "channel", None)
+        is_mod = False
+        if channel and hasattr(channel, "permissions_for"):
+            is_mod = channel.permissions_for(interaction.user).manage_messages
+        else:
+            is_mod = getattr(interaction.user.guild_permissions, "manage_messages", False)
+
+        is_owner = await interaction.client.is_owner(interaction.user)
+
+        if not (is_mod or is_owner):
             await interaction.response.send_message(
-                "❌ Only the person who ran this lookup can use this button.",
+                "❌ Only the person who requested this quote or a moderator with Manage Messages can delete it.",
                 ephemeral=True,
             )
             return False
         return True
 
-    async def _on_switch_profile(self, interaction: discord.Interaction) -> None:
+    @discord.ui.button(emoji="🗑️", style=discord.ButtonStyle.secondary, custom_id="strifecogs:linkquoter:delete")
+    async def delete_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.defer()
-        embed, error_kind = await self.cog._build_profile_embed(self.target_user)
-        if embed:
-            self.current_view = "profile"
-            self._update_button()
-            await self.cog._safe_send_embed(interaction, embed, view=self, is_edit=True)
-        else:
-            await interaction.followup.send(
-                f"Could not load system profile ({error_kind or 'not found'}).", ephemeral=True
-            )
-
-    async def _on_switch_fronters(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer()
-        embed, error_kind = await self.cog._build_fronters_embed(self.target_user)
-        if embed:
-            self.current_view = "fronters"
-            self._update_button()
-            await self.cog._safe_send_embed(interaction, embed, view=self, is_edit=True)
-        else:
-            await interaction.followup.send(
-                f"Could not load fronters ({error_kind or 'not found'}).", ephemeral=True
-            )
-
-    async def on_timeout(self) -> None:
-        self.stop()
+        target_msg = self.message or interaction.message
+        if target_msg:
+            try:
+                await target_msg.delete()
+            except discord.HTTPException:
+                pass
 
 
-class PKLens(commands.Cog):
-    """Silently check PluralKit system profiles and current fronters server-wide and via User Apps."""
+class LinkQuoter(commands.Cog):
+    """Quotes Discord message links with rich previews, thread support, and flexible cross-server security."""
 
-    __version__ = "1.0.6"
     __author__ = ["SinOfStrife"]
-    __red_end_user_data_statement__ = (
-        "This cog does not store data. Looking up a user sends their "
-        "Discord user ID to the PluralKit API at api.pluralkit.me."
-    )
+    __version__ = "3.1.6"
+    __red_end_user_data_statement__ = "This cog does not persistently store personal data about users."
 
-    def __init__(self, bot: Red) -> None:
-        super().__init__()
+    def __init__(self, bot: Red):
         self.bot = bot
-        self.session: Optional[aiohttp.ClientSession] = None
-        self.headers = {"User-Agent": "PKLens/1.0.6 (https://github.com/SinOfStrife/strife-cogs)"}
+        self.config = Config.get_conf(self, identifier=839217482910, force_registration=True)
 
-        # Cache: dict[endpoint, (timestamp, payload)]
-        self._cache: dict[str, tuple[float, dict[str, Any]]] = {}
-        self._cache_ttl = 60.0
+        default_guild = {
+            "enabled": False,
+            "delete_original": False,
+            "cross_guild_mode": "off",
+            "cross_guild_whitelist": [],
+            "ignored_channels": [],
+            "ignored_roles": [],
+            "allowed_roles": [],
+        }
+        self.config.register_guild(**default_guild)
 
-        # Context Menus (Server & User App Contexts) with capitalized display names
-        self.check_fronters_menu = app_commands.ContextMenu(
-            name="Fronter",
-            callback=self.check_fronter_callback,
-            allowed_installs=app_commands.AppInstallationType(guild=True, user=True),
-            allowed_contexts=app_commands.AppCommandContext(guild=True, dm_channel=True, private_channel=True),
-            extras={"red_force_enable": True},
-        )
-        self.view_profile_menu = app_commands.ContextMenu(
-            name="Profile",
-            callback=self.view_profile_callback,
-            allowed_installs=app_commands.AppInstallationType(guild=True, user=True),
-            allowed_contexts=app_commands.AppCommandContext(guild=True, dm_channel=True, private_channel=True),
-            extras={"red_force_enable": True},
-        )
+        self._cache: Dict[int, Dict[str, Any]] = {}
+        self._cooldown = commands.CooldownMapping.from_cooldown(3, 10, commands.BucketType.channel)
+        self.persistent_view_added = False
+
+    def _get_cache(self, guild_id: int) -> Dict[str, Any]:
+        return self._cache.setdefault(guild_id, {
+            "enabled": False,
+            "delete_original": False,
+            "cross_guild_mode": "off",
+            "cross_guild_whitelist": set(),
+            "ignored_channels": set(),
+            "ignored_roles": set(),
+            "allowed_roles": set(),
+        })
 
     async def cog_load(self) -> None:
-        self.session = aiohttp.ClientSession(
-            headers=self.headers,
-            timeout=aiohttp.ClientTimeout(total=20),
-        )
-        try:
-            self.bot.tree.add_command(self.check_fronters_menu)
-            self.bot.tree.add_command(self.view_profile_menu)
-        except Exception:
-            self._drop_menus()
-            await self.session.close()
-            self.session = None
-            raise
+        await self._build_cache()
+        if not self.persistent_view_added:
+            self.bot.add_view(QuoteDeleteView())
+            self.persistent_view_added = True
 
-    async def cog_unload(self) -> None:
-        self._drop_menus()
-        if self.session is not None and not self.session.closed:
-            await self.session.close()
-        self.session = None
+    async def _build_cache(self) -> None:
+        guilds_data = await self.config.all_guilds()
+        for guild_id, data in guilds_data.items():
+            self._cache[guild_id] = {
+                "enabled": data.get("enabled", False),
+                "delete_original": data.get("delete_original", False),
+                "cross_guild_mode": data.get("cross_guild_mode", "off"),
+                "cross_guild_whitelist": set(data.get("cross_guild_whitelist", [])),
+                "ignored_channels": set(data.get("ignored_channels", [])),
+                "ignored_roles": set(data.get("ignored_roles", [])),
+                "allowed_roles": set(data.get("allowed_roles", [])),
+            }
 
-    def _drop_menus(self) -> None:
-        for menu in (self.check_fronters_menu, self.view_profile_menu):
-            if self.bot.tree.get_command(menu.name, type=menu.type) is not None:
-                self.bot.tree.remove_command(menu.name, type=menu.type)
-
-    async def red_get_data_for_user(self, *, user_id: int) -> dict[str, Any]:
+    async def red_get_data_for_user(self, *, user_id: int) -> dict:
         return {}
 
     async def red_delete_data_for_user(
@@ -205,261 +143,464 @@ class PKLens(commands.Cog):
     ) -> None:
         return
 
-    def _save_to_cache(self, endpoint: str, payload: dict[str, Any], now: float) -> None:
-        """Saves data to cache and evicts oldest entry if cache exceeds limit."""
-        if len(self._cache) >= _MAX_CACHE_ITEMS:
-            oldest = min(self._cache.keys(), key=lambda k: self._cache[k][0])
-            self._cache.pop(oldest, None)
-        self._cache[endpoint] = (now, payload)
-
-    async def fetch_pk_data(self, endpoint: str) -> dict[str, Any]:
-        now = time.monotonic()
-        if endpoint in self._cache:
-            timestamp, cached_data = self._cache[endpoint]
-            if now - timestamp < self._cache_ttl:
-                return cached_data
-
-        if self.session is None or self.session.closed:
-            return {"error": "api_error"}
-
-        try:
-            async with self.session.get(f"{PK_API}{endpoint}") as resp:
-                if resp.status == 404:
-                    return {"error": "not_found"}
-                if resp.status == 403:
-                    return {"error": "private"}
-                if resp.status == 429:
-                    return {"error": "rate_limited"}
-                if resp.status != 200:
-                    return {"error": "api_error"}
-                payload = await resp.json(content_type=None)
-        except Exception:
-            return {"error": "api_error"}
-
-        if not isinstance(payload, dict):
-            return {"error": "api_error"}
-
-        self._save_to_cache(endpoint, payload, now)
-        return payload
-
-    async def _safe_send_embed(
-        self,
-        interaction: discord.Interaction,
-        embed: discord.Embed,
-        view: Optional[discord.ui.View] = None,
-        is_edit: bool = False,
-    ) -> None:
-        """Sends or edits an embed, cleanly stripping broken thumbnail URLs if Discord rejects them."""
-        try:
-            if is_edit:
-                await interaction.edit_original_response(embed=embed, view=view)
-            else:
-                await interaction.followup.send(embed=embed, view=view, ephemeral=True)
-        except discord.HTTPException as e:
-            if e.code == 50035 and embed.thumbnail:  # Invalid Form Body (bad image URL)
-                embed.set_thumbnail(url=None)
-                if is_edit:
-                    await interaction.edit_original_response(embed=embed, view=view)
-                else:
-                    await interaction.followup.send(embed=embed, view=view, ephemeral=True)
-            else:
-                raise
-
-    async def _send_pk_error(
-        self,
-        interaction: discord.Interaction,
-        user: discord.User | discord.Member,
-        data: dict[str, Any],
-        kind: str,
-    ) -> None:
-        err = data.get("error", "api_error")
-        if err == "not_found":
-            msg = f"**{user.name}** is not registered with PluralKit or has a private profile."
-        elif err == "private":
-            msg = f"**{user.name}** has set their {kind} to **private**."
-        elif err == "rate_limited":
-            msg = "PluralKit is currently rate-limited. Please try again in a moment."
+    async def _send_error(self, ctx: commands.Context, title: str, description: str) -> None:
+        can_embed = ctx.channel.permissions_for(ctx.me).embed_links
+        if can_embed:
+            embed = discord.Embed(title=f"🛑 {title}", description=description, color=discord.Color.red())
+            await ctx.send(embed=embed, delete_after=12)
         else:
-            msg = "An error occurred while contacting the PluralKit API."
+            await ctx.send(f"**🛑 {title}**\n{description}", delete_after=12)
 
-        embed = discord.Embed(title="⚠️ Error", description=msg, color=discord.Color.red())
-        await interaction.followup.send(embed=embed, ephemeral=True)
+    async def _fetch_and_validate(
+        self,
+        requester: discord.Member,
+        dest_channel: Union[discord.abc.GuildChannel, discord.Thread],
+        guild_id_str: str,
+        channel_id: int,
+        message_id: int,
+        *,
+        is_manual: bool = False,
+    ) -> Tuple[Optional[discord.Message], Optional[str]]:
+        if guild_id_str.lower() == "@me":
+            return None, "I can only quote messages from servers, not direct messages."
 
-    # --- Embed Builders ---
+        guild_id = int(guild_id_str)
+        target_guild = self.bot.get_guild(guild_id)
+        if not target_guild:
+            return None, "That message link belongs to a server I am not in."
 
-    async def _build_fronters_embed(
-        self, user: discord.User | discord.Member
-    ) -> tuple[Optional[discord.Embed], Optional[str]]:
-        data = await self.fetch_pk_data(f"/systems/{user.id}/fronters")
-        if "error" in data:
-            return None, data.get("error")
+        if target_guild.id != dest_channel.guild.id:
+            dest_cache = self._get_cache(dest_channel.guild.id)
+            source_cache = self._get_cache(target_guild.id)
 
-        fronters = data.get("members") or []
-        if not isinstance(fronters, list):
-            return None, "api_error"
+            dest_mode = dest_cache.get("cross_guild_mode", "off")
+            source_mode = source_cache.get("cross_guild_mode", "off")
 
-        if not fronters:
-            embed = discord.Embed(
-                title=_clip(f"🟢 Current Fronters: {user.name}", _TITLE_LIMIT),
-                description="No system members are currently fronting.",
-                color=discord.Color.dark_grey(),
-            )
-            return embed, None
+            if dest_mode == "off" or source_mode == "off":
+                return None, "Cross-server quoting is disabled for one or both servers."
 
-        lines = []
-        for member in fronters:
-            if isinstance(member, dict):
-                label = _member_label(member)
-                pronouns = member.get("pronouns")
-                if pronouns and str(pronouns).strip():
-                    lines.append(f"• **{label}** *({str(pronouns).strip()})*")
-                else:
-                    lines.append(f"• **{label}**")
+            if dest_mode == "whitelist":
+                if target_guild.id not in dest_cache.get("cross_guild_whitelist", set()):
+                    return None, "This server has not whitelisted the source server."
+            
+            if source_mode == "whitelist":
+                if dest_channel.guild.id not in source_cache.get("cross_guild_whitelist", set()):
+                    return None, "The source server requires explicit whitelist approval to quote its messages."
 
-        embed = discord.Embed(
-            title=_clip(f"🟢 Current Fronters: {user.name}", _TITLE_LIMIT),
-            description=_clip("\n".join(lines) if lines else "Unknown", _DESC_LIMIT),
-            color=discord.Color.green(),
-        )
+        target_channel = target_guild.get_channel_or_thread(channel_id)
+        if not target_channel:
+            try:
+                target_channel = await self.bot.fetch_channel(channel_id)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                return None, "I could not find the channel or thread that message was sent in."
 
-        for member in fronters:
-            if isinstance(member, dict):
-                avatar = member.get("avatar_url")
-                if _is_valid_url(avatar):
-                    embed.set_thumbnail(url=avatar)
+        if getattr(target_channel, "guild", None) is None or target_channel.guild.id != target_guild.id:
+            return None, "The channel in that link does not belong to the specified server."
+
+        if _is_nsfw(target_channel) and not _is_nsfw(dest_channel):
+            return None, "Messages from NSFW channels cannot be quoted in non-NSFW channels."
+
+        bot_perms = target_channel.permissions_for(target_guild.me)
+        if not (bot_perms.read_messages and bot_perms.read_message_history):
+            return None, "I do not have permission to read messages in that channel."
+
+        if target_guild.id == dest_channel.guild.id:
+            author_member = requester
+            author_perms = target_channel.permissions_for(author_member)
+            if not (author_perms.read_messages and author_perms.read_message_history):
+                return None, "You do not have permission to view the channel that message was sent in."
+
+        message = discord.utils.get(self.bot.cached_messages, id=message_id)
+        if not message:
+            try:
+                message = await target_channel.fetch_message(message_id)
+            except discord.NotFound:
+                return None, "I couldn't find that message. It may have been deleted."
+            except discord.Forbidden:
+                return None, "I do not have access to read that message."
+            except discord.HTTPException:
+                return None, "Discord encountered an error while retrieving that message."
+
+        return message, None
+
+    def _build_quote_embed(
+        self,
+        message: discord.Message,
+        commentary: Optional[str] = None,
+        commenter: Optional[discord.Member | discord.User] = None,
+        color: Optional[discord.Color] = None,
+    ) -> discord.Embed:
+        embed_color = color or (message.author.color if getattr(message.author.color, "value", 0) != 0 else discord.Color.blurple())
+        embed = discord.Embed(color=embed_color, timestamp=message.created_at)
+
+        channel = message.channel
+        if isinstance(channel, discord.Thread):
+            parent_name = channel.parent.name if channel.parent else "Unknown"
+            footer_text = f"#{parent_name} ➔ 🧵 {channel.name}"
+        else:
+            footer_text = f"#{channel.name}"
+
+        if message.guild:
+            embed.set_footer(text=f"{footer_text} • {message.guild.name}", icon_url=message.guild.icon.url if message.guild.icon else None)
+        else:
+            embed.set_footer(text=footer_text)
+
+        embed.set_author(name=f"{message.author.display_name} said...", icon_url=message.author.display_avatar.url, url=message.jump_url)
+
+        description_parts = []
+        if commentary:
+            name_tag = f"**{commenter.display_name}:** " if commenter else ""
+            description_parts.append(f"💬 {name_tag}*\"{_clip(commentary, 400)}\"*")
+
+        body_text = message.content or getattr(message, "system_content", "")
+        if body_text:
+            description_parts.append(f">>> {_clip(body_text, 3500)}")
+
+        embed.description = "\n\n".join(description_parts) if description_parts else "*[Click link below to view contents]*"
+
+        image_url = None
+        if message.attachments:
+            for att in message.attachments:
+                if att.filename.lower().endswith(("png", "jpg", "jpeg", "gif", "webp")) and not att.is_spoiler():
+                    image_url = att.proxy_url or att.url
                     break
 
-        return embed, None
+            shown_links = []
+            curr_len = 0
+            for a in message.attachments:
+                tag = f"|| [{a.filename}]({a.url}) ||" if a.is_spoiler() else f"[{a.filename}]({a.url})"
+                if curr_len + len(tag) + 2 > 950:
+                    break
+                shown_links.append(tag)
+                curr_len += len(tag) + 2
 
-    async def _build_profile_embed(
-        self, user: discord.User | discord.Member
-    ) -> tuple[Optional[discord.Embed], Optional[str]]:
-        data = await self.fetch_pk_data(f"/systems/{user.id}")
-        if "error" in data:
-            return None, data.get("error")
+            rem = len(message.attachments) - len(shown_links)
+            val_text = ", ".join(shown_links) + (f" ... and {rem} more" if rem > 0 else "")
+            embed.add_field(name="Attachments", value=val_text, inline=False)
 
-        system_name = data.get("name") or user.name
-        tag = data.get("tag")
-        title = f"{system_name} [{tag}]" if tag else str(system_name)
+        if not image_url and message.stickers:
+            for sticker in message.stickers:
+                if sticker.url:
+                    image_url = sticker.url
+                    embed.add_field(name="Sticker", value=f"[{sticker.name}]({sticker.url})", inline=False)
+                    break
 
-        embed = discord.Embed(
-            title=_clip(title, _TITLE_LIMIT),
-            description=_clip(str(data.get("description") or "No description provided."), _DESC_LIMIT),
-            color=_embed_color(data.get("color")),
+        if not image_url and message.embeds:
+            for e in message.embeds:
+                if e.image and e.image.url:
+                    image_url = e.image.url
+                    break
+                elif e.thumbnail and e.thumbnail.url:
+                    image_url = e.thumbnail.url
+                    break
+
+        if image_url:
+            embed.set_image(url=image_url)
+
+        embed.add_field(name="Source", value=f"[Jump to Original Message]({message.jump_url})", inline=False)
+        return embed
+
+    @commands.Cog.listener()
+    async def on_guild_remove(self, guild: discord.Guild) -> None:
+        self._cache.pop(guild.id, None)
+
+    @commands.Cog.listener()
+    async def on_message_without_command(self, message: discord.Message) -> None:
+        if not message.guild or message.author.bot or message.webhook_id:
+            return
+
+        guild_cache = self._get_cache(message.guild.id)
+        if not guild_cache.get("enabled", False):
+            return
+
+        allowed_roles = guild_cache.get("allowed_roles", set())
+        if allowed_roles and not any(role.id in allowed_roles for role in getattr(message.author, "roles", [])):
+            return
+
+        channel_id_to_check = getattr(message.channel, "parent_id", message.channel.id) or message.channel.id
+        if channel_id_to_check in guild_cache.get("ignored_channels", set()) or message.channel.id in guild_cache.get("ignored_channels", set()):
+            return
+
+        if any(role.id in guild_cache.get("ignored_roles", set()) for role in getattr(message.author, "roles", [])):
+            return
+
+        if "no quote" in message.content.lower():
+            return
+
+        dest_perms = message.channel.permissions_for(message.guild.me)
+        if not (dest_perms.send_messages and dest_perms.embed_links):
+            return
+
+        target_match = None
+        for match in LINK_REGEX.finditer(message.content):
+            start, end = match.span()
+            if start > 0 and end < len(message.content) and message.content[start - 1] == "<" and message.content[end] == ">":
+                continue
+            target_match = match
+            break
+
+        if not target_match:
+            return
+
+        guild_id_str = target_match.group("guild_id")
+        channel_id = int(target_match.group("channel_id"))
+        message_id = int(target_match.group("message_id"))
+
+        target_message, _ = await self._fetch_and_validate(
+            message.author, message.channel, guild_id_str, channel_id, message_id, is_manual=False
         )
-        embed.add_field(
-            name="Pronouns",
-            value=_clip(str(data.get("pronouns") or "Not specified."), _FIELD_LIMIT),
-            inline=True,
+        if not target_message:
+            return
+
+        bucket = self._cooldown.get_bucket(message)
+        if bucket and bucket.update_rate_limit():
+            return
+
+        raw_commentary = (message.content[:target_match.start()] + message.content[target_match.end():]).strip()
+        commentary = raw_commentary if raw_commentary else None
+
+        embed = self._build_quote_embed(target_message, commentary=commentary, commenter=message.author)
+        view = QuoteDeleteView(invoker_id=message.author.id)
+
+        try:
+            view.message = await message.channel.send(embed=embed, view=view, allowed_mentions=discord.AllowedMentions.none())
+        except discord.HTTPException:
+            return
+
+        if guild_cache.get("delete_original", False) and dest_perms.manage_messages:
+            try:
+                await message.delete()
+            except (discord.NotFound, discord.Forbidden):
+                pass
+
+    @commands.guild_only()
+    @commands.cooldown(3, 10, commands.BucketType.channel)
+    @commands.bot_has_permissions(send_messages=True, embed_links=True)
+    @commands.command(name="linkquote", aliases=["lq", "quote"])
+    async def linkquote(self, ctx: commands.Context, *, link_and_commentary: Optional[str] = None) -> None:
+        """Quote a Discord message link or replied message.
+
+        You can either provide a direct message link, or reply to a message and run this command. You can also add your own commentary text alongside the link.
+
+        **Arguments:**
+        • `[link_and_commentary]`: A Discord message link, optionally followed by your own commentary text. If omitted, you must reply to a message.
+
+        **Examples:**
+        • `[p]linkquote https://discord.com/channels/...`
+        • `[p]linkquote https://discord.com/channels/... check this out!`
+        • Reply to any message with: `[p]linkquote`
+        """
+        guild_cache = self._get_cache(ctx.guild.id)
+        allowed_roles = guild_cache.get("allowed_roles", set())
+        if allowed_roles and not any(role.id in allowed_roles for role in getattr(ctx.author, "roles", [])):
+            if not await ctx.bot.is_owner(ctx.author):
+                await self._send_error(ctx, "Permission Denied", "You do not have the required role to use LinkQuoter.")
+                return
+
+        target_text = link_and_commentary or ""
+        match = LINK_REGEX.search(target_text)
+        commentary = None
+
+        if not match:
+            if ctx.message.reference:
+                if isinstance(ctx.message.reference.resolved, discord.Message):
+                    target_link = ctx.message.reference.resolved.jump_url
+                    match = LINK_REGEX.search(target_link)
+                elif ctx.message.reference.message_id:
+                    ref = ctx.message.reference
+                    target_link = f"https://discord.com/channels/{ctx.guild.id}/{ref.channel_id}/{ref.message_id}"
+                    match = LINK_REGEX.search(target_link)
+
+            if match and target_text:
+                commentary = target_text.strip()
+        else:
+            raw_commentary = (target_text[:match.start()] + target_text[match.end():]).strip()
+            commentary = raw_commentary if raw_commentary else None
+
+        if not match:
+            await self._send_error(ctx, "Missing Link", "Please provide a valid message link or reply to a message.")
+            return
+
+        guild_id_str = match.group("guild_id")
+        channel_id = int(match.group("channel_id"))
+        message_id = int(match.group("message_id"))
+
+        target_message, error_msg = await self._fetch_and_validate(
+            ctx.author, ctx.channel, guild_id_str, channel_id, message_id, is_manual=True
         )
+        if not target_message:
+            await self._send_error(ctx, "Quote Failed", error_msg or "Could not retrieve that message.")
+            return
 
-        avatar = data.get("avatar_url")
-        if _is_valid_url(avatar):
-            embed.set_thumbnail(url=avatar)
+        embed = self._build_quote_embed(target_message, commentary=commentary, commenter=ctx.author)
+        view = QuoteDeleteView(invoker_id=ctx.author.id)
+        view.message = await ctx.send(embed=embed, view=view, allowed_mentions=discord.AllowedMentions.none())
 
-        return embed, None
+    @commands.guild_only()
+    @commands.admin_or_permissions(manage_guild=True)
+    @commands.bot_has_permissions(send_messages=True)
+    @commands.group(name="linkquoteset", aliases=("lqset",))
+    async def linkquoteset(self, ctx: commands.Context) -> None:
+        """Manage LinkQuoter settings for this server."""
+        pass
 
-    # --- Core Response Handlers ---
+    @linkquoteset.command(name="toggle")
+    async def linkquoteset_toggle(self, ctx: commands.Context) -> None:
+        """Toggle automatic message link quoting in this server."""
+        guild_cache = self._get_cache(ctx.guild.id)
+        current = guild_cache.get("enabled", False)
+        new_state = not current
+        await self.config.guild(ctx.guild).enabled.set(new_state)
+        guild_cache["enabled"] = new_state
+        await ctx.send(f"Automatic link quoting is now **{'enabled' if new_state else 'disabled'}**.")
 
-    async def _reply_fronters(self, interaction: discord.Interaction, user: discord.User | discord.Member) -> None:
-        embed, error = await self._build_fronters_embed(user)
-        if embed:
-            view = PKSwitchView(self, interaction.user.id, user, "fronters")
-            await self._safe_send_embed(interaction, embed, view=view)
+    @linkquoteset.command(name="delete")
+    async def linkquoteset_delete(self, ctx: commands.Context) -> None:
+        """Toggle deleting the user's original message after quoting."""
+        guild_cache = self._get_cache(ctx.guild.id)
+        current = guild_cache.get("delete_original", False)
+        new_state = not current
+        await self.config.guild(ctx.guild).delete_original.set(new_state)
+        guild_cache["delete_original"] = new_state
+        await ctx.send(f"Deleting the original message after quoting is now **{'enabled' if new_state else 'disabled'}**.")
+
+    @linkquoteset.command(name="mode")
+    async def linkquoteset_mode(self, ctx: commands.Context, mode: Literal["off", "whitelist", "public"]) -> None:
+        """Set cross-server quoting mode: off, whitelist, or public."""
+        guild_cache = self._get_cache(ctx.guild.id)
+        await self.config.guild(ctx.guild).cross_guild_mode.set(mode)
+        guild_cache["cross_guild_mode"] = mode
+        
+        if mode == "public":
+            await ctx.send(
+                "⚠️ **Cross-server mode set to PUBLIC.**\n"
+                "Any other public server can now quote messages from this guild. "
+                "Ensure private channels are hidden from the bot or ignored using `[p]linkquoteset ignorechannel`."
+            )
         else:
-            await self._send_pk_error(interaction, user, {"error": error or "api_error"}, "fronters")
+            await ctx.send(f"Cross-server quoting mode has been set to **{mode}**.")
 
-    async def _reply_profile(self, interaction: discord.Interaction, user: discord.User | discord.Member) -> None:
-        embed, error = await self._build_profile_embed(user)
-        if embed:
-            view = PKSwitchView(self, interaction.user.id, user, "profile")
-            await self._safe_send_embed(interaction, embed, view=view)
+    @linkquoteset.command(name="whitelist")
+    async def linkquoteset_whitelist(self, ctx: commands.Context, server_id: int) -> None:
+        """Add or remove a companion server ID for mutual cross-server quoting."""
+        if server_id == ctx.guild.id:
+            await ctx.send("❌ This server is already permitted to quote its own messages by default.")
+            return
+
+        guild_cache = self._get_cache(ctx.guild.id)
+        allowed: Set[int] = guild_cache.setdefault("cross_guild_whitelist", set())
+
+        if server_id in allowed:
+            allowed.discard(server_id)
+            async with self.config.guild(ctx.guild).cross_guild_whitelist() as w:
+                if server_id in w:
+                    w.remove(server_id)
+            await ctx.send(f"Removed server ID `{server_id}` from whitelist.")
         else:
-            await self._send_pk_error(interaction, user, {"error": error or "api_error"}, "system profile")
+            allowed.add(server_id)
+            async with self.config.guild(ctx.guild).cross_guild_whitelist() as w:
+                if server_id not in w:
+                    w.append(server_id)
+            await ctx.send(f"Added server ID `{server_id}` to whitelist.")
 
-    # --- Commands ---
+    @linkquoteset.command(name="ignorechannel")
+    async def linkquoteset_ignorechannel(
+        self, ctx: commands.Context, channel: Union[discord.abc.GuildChannel, discord.Thread]
+    ) -> None:
+        """Ignore or un-ignore a channel/thread from automatic link quoting."""
+        guild_cache = self._get_cache(ctx.guild.id)
+        ignored = guild_cache.setdefault("ignored_channels", set())
 
-    @app_commands.command(
-        name="pklens",
-        description="View info about PKLens and how to use it.",
-        extras={"red_force_enable": True},
-    )
-    @app_commands.allowed_installs(guilds=True, users=True)
-    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-    @app_commands.describe(public="Set to True to share info with the channel (default: False)")
-    async def pklens_help(self, interaction: discord.Interaction, public: bool = False) -> None:
-        can_embed = True
-        if public and interaction.guild and interaction.channel:
-            can_embed = interaction.channel.permissions_for(interaction.guild.me).embed_links
+        if channel.id in ignored:
+            ignored.discard(channel.id)
+            async with self.config.guild(ctx.guild).ignored_channels() as chs:
+                if channel.id in chs:
+                    chs.remove(channel.id)
+            await ctx.send(f"Auto-quoting will now process links in {channel.mention}.")
+        else:
+            ignored.add(channel.id)
+            async with self.config.guild(ctx.guild).ignored_channels() as chs:
+                chs.append(channel.id)
+            await ctx.send(f"Auto-quoting will now ignore links in {channel.mention} (and any threads inside it).")
 
-        app_id = interaction.application_id or getattr(self.bot, "application_id", None) or self.bot.user.id
-        oauth_url = f"https://discord.com/oauth2/authorize?client_id={app_id}"
-        view = PKAddAppView(oauth_url)
+    @linkquoteset.command(name="ignorerole")
+    async def linkquoteset_ignorerole(self, ctx: commands.Context, role: discord.Role) -> None:
+        """Ignore or un-ignore a role from automatic link quoting."""
+        guild_cache = self._get_cache(ctx.guild.id)
+        ignored = guild_cache.setdefault("ignored_roles", set())
 
+        if role.id in ignored:
+            ignored.discard(role.id)
+            async with self.config.guild(ctx.guild).ignored_roles() as rls:
+                if role.id in rls:
+                    rls.remove(role.id)
+            await ctx.send(f"Auto-quoting will now process links from roles named **{role.name}**.")
+        else:
+            ignored.add(role.id)
+            async with self.config.guild(ctx.guild).ignored_roles() as rls:
+                if role.id not in rls:
+                    rls.append(role.id)
+            await ctx.send(f"Auto-quoting will now ignore links from roles named **{role.name}**.")
+
+    @linkquoteset.command(name="allowrole")
+    async def linkquoteset_allowrole(self, ctx: commands.Context, role: discord.Role) -> None:
+        """Allow or un-allow a role to use LinkQuoter (restricts quoting to these roles)."""
+        guild_cache = self._get_cache(ctx.guild.id)
+        allowed = guild_cache.setdefault("allowed_roles", set())
+
+        if role.id in allowed:
+            allowed.discard(role.id)
+            async with self.config.guild(ctx.guild).allowed_roles() as rls:
+                if role.id in rls:
+                    rls.remove(role.id)
+            await ctx.send(f"Removed **{role.name}** from the allowed roles list.")
+        else:
+            allowed.add(role.id)
+            async with self.config.guild(ctx.guild).allowed_roles() as rls:
+                if role.id not in rls:
+                    rls.append(role.id)
+            await ctx.send(
+                f"Added **{role.name}** to the allowed roles list.\n"
+                f"*(Only members with allowed roles can quote links when this list is not empty).*"
+            )
+
+    @linkquoteset.command(name="settings", aliases=["showsettings"])
+    async def linkquoteset_settings(self, ctx: commands.Context) -> None:
+        """Display active LinkQuoter settings for this server."""
+        data = self._get_cache(ctx.guild.id)
+        enabled = data.get("enabled", False)
+        delete_orig = data.get("delete_original", False)
+        mode = data.get("cross_guild_mode", "off")
+        whitelisted = data.get("cross_guild_whitelist", set())
+        ignored_chs = data.get("ignored_channels", set())
+        ignored_rls = data.get("ignored_roles", set())
+        allowed_rls = data.get("allowed_roles", set())
+
+        ch_text = ", ".join(f"<#{cid}>" for cid in ignored_chs) if ignored_chs else "None"
+        role_text = ", ".join(f"<@&{rid}>" for rid in ignored_rls) if ignored_rls else "None"
+        allowed_role_text = ", ".join(f"<@&{rid}>" for rid in allowed_rls) if allowed_rls else "All Roles (Open)"
+        wl_text = ", ".join(f"`{gid}`" for gid in whitelisted) if whitelisted else "None"
+
+        can_embed = ctx.channel.permissions_for(ctx.me).embed_links
         if can_embed:
-            embed = discord.Embed(
-                title="🔍 PKLens",
-                description=(
-                    "A lightweight, privacy-focused tool to inspect public PluralKit system profiles "
-                    "and current fronters without chat spam.\n\n"
-                    "**🌐 Server vs. User App:**\n"
-                    "• **User App (Account-level):** Installs directly to your personal Discord profile. "
-                    "Works **Discord-wide** in DMs, group chats, and external servers where the bot isn't invited!\n"
-                    "• **Server App:** Added to a server so **all members in that server** can use it automatically."
-                ),
-                color=discord.Color.from_str("#6b2598"),
-            )
-            embed.add_field(
-                name="How to use (on User Profiles or slash commands)",
-                value=(
-                    "• 🖥️ **Desktop:** Right-click user profile ➔ `Apps` (or use `/pkfronters` / `/pkprofile`).\n"
-                    "• 📱 **Mobile:** Tap user profile ➔ scroll to `Apps` (or use `/pkfronters` / `/pkprofile`)."
-                ),
-                inline=False,
-            )
-            embed.set_footer(text="All lookups are 100% private and ephemeral by default.")
-            await interaction.response.send_message(embed=embed, view=view, ephemeral=not public)
+            embed = discord.Embed(title=f"LinkQuoter Settings — {ctx.guild.name}", color=await ctx.embed_color())
+            embed.add_field(name="Auto-Quoting", value="Enabled" if enabled else "Disabled", inline=True)
+            embed.add_field(name="Delete Original Link", value="Enabled" if delete_orig else "Disabled", inline=True)
+            embed.add_field(name="Cross-Server Mode", value=mode.capitalize(), inline=True)
+            embed.add_field(name="Server Whitelist", value=_clip(wl_text, 1024), inline=False)
+            embed.add_field(name="Allowed Roles", value=_clip(allowed_role_text, 1024), inline=False)
+            embed.add_field(name="Ignored Channels", value=_clip(ch_text, 1024), inline=False)
+            embed.add_field(name="Ignored Roles", value=_clip(role_text, 1024), inline=False)
+            await ctx.send(embed=embed)
         else:
-            fallback = (
-                "**🔍 PKLens**\n"
-                "A privacy-focused tool to view public PluralKit profiles silently.\n\n"
-                "**🌐 Server vs. User App:**\n"
-                "• **User App:** Installs to your personal account to use **Discord-wide** across DMs and external servers.\n"
-                "• **Server:** Adds the bot to a server for all members to use.\n\n"
-                "**How to use:**\n"
-                "• 🖥️ Desktop: Right-click user profile ➔ `Apps` (or `/pkfronters` / `/pkprofile`).\n"
-                "• 📱 Mobile: Tap user profile ➔ `Apps` (or `/pkfronters` / `/pkprofile`).\n\n"
-                f"**Add PKLens:** <{oauth_url}>\n"
-                "*(All lookups are private and ephemeral by default)*"
+            msg = (
+                f"**LinkQuoter Settings — {ctx.guild.name}**\n"
+                f"• Auto-Quoting: {'Enabled' if enabled else 'Disabled'}\n"
+                f"• Delete Original Link: {'Enabled' if delete_orig else 'Disabled'}\n"
+                f"• Cross-Server Mode: {mode.capitalize()}\n"
+                f"• Server Whitelist: {_clip(wl_text, 250)}\n"
+                f"• Allowed Roles: {_clip(allowed_role_text, 250)}\n"
+                f"• Ignored Channels: {_clip(ch_text, 250)}\n"
+                f"• Ignored Roles: {_clip(role_text, 250)}"
             )
-            await interaction.response.send_message(fallback, view=view, ephemeral=not public)
-
-    @app_commands.command(
-        name="pkfronters",
-        description="Silently check who is currently fronting in a PluralKit system.",
-        extras={"red_force_enable": True},
-    )
-    @app_commands.allowed_installs(guilds=True, users=True)
-    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-    async def pkfronters_slash(self, interaction: discord.Interaction, user: discord.User) -> None:
-        await interaction.response.defer(ephemeral=True)
-        await self._reply_fronters(interaction, user)
-
-    @app_commands.command(
-        name="pkprofile",
-        description="Silently view a user's public PluralKit system profile.",
-        extras={"red_force_enable": True},
-    )
-    @app_commands.allowed_installs(guilds=True, users=True)
-    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-    async def pkprofile_slash(self, interaction: discord.Interaction, user: discord.User) -> None:
-        await interaction.response.defer(ephemeral=True)
-        await self._reply_profile(interaction, user)
-
-    async def check_fronter_callback(self, interaction: discord.Interaction, user: discord.User) -> None:
-        await interaction.response.defer(ephemeral=True)
-        await self._reply_fronters(interaction, user)
-
-    async def view_profile_callback(self, interaction: discord.Interaction, user: discord.User) -> None:
-        await interaction.response.defer(ephemeral=True)
-        await self._reply_profile(interaction, user)
+            await ctx.send(_clip(msg, 1900))
