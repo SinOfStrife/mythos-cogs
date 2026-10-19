@@ -80,7 +80,7 @@ class LinkQuoter(commands.Cog):
     """Quotes Discord message links with rich previews, thread support, and flexible cross-server security."""
 
     __author__ = ["SinOfStrife"]
-    __version__ = "3.1.6"
+    __version__ = "3.1.7"
     __red_end_user_data_statement__ = "This cog does not persistently store personal data about users."
 
     def __init__(self, bot: Red):
@@ -251,6 +251,11 @@ class LinkQuoter(commands.Cog):
         if commentary:
             name_tag = f"**{commenter.display_name}:** " if commenter else ""
             description_parts.append(f"💬 {name_tag}*\"{_clip(commentary, 400)}\"*")
+
+        if hasattr(message, "poll") and message.poll:
+            poll_question = getattr(getattr(message.poll, "question", None), "text", None)
+            if poll_question:
+                description_parts.append(f"📊 **Poll:** *\"{_clip(poll_question, 300)}\"*")
 
         body_text = message.content or getattr(message, "system_content", "")
         if body_text:
@@ -433,7 +438,7 @@ class LinkQuoter(commands.Cog):
             return
 
         embed = self._build_quote_embed(target_message, commentary=commentary, commenter=ctx.author)
-        view = QuoteDeleteView(invoker_id=ctx.author.id)
+        view = QuoteDeleteView(invoker_id=message.author.id)
         view.message = await ctx.send(embed=embed, view=view, allowed_mentions=discord.AllowedMentions.none())
 
     @commands.guild_only()
@@ -520,7 +525,8 @@ class LinkQuoter(commands.Cog):
         else:
             ignored.add(channel.id)
             async with self.config.guild(ctx.guild).ignored_channels() as chs:
-                chs.append(channel.id)
+                if channel.id not in chs:
+                    chs.append(channel.id)
             await ctx.send(f"Auto-quoting will now ignore links in {channel.mention} (and any threads inside it).")
 
     @linkquoteset.command(name="ignorerole")
@@ -573,12 +579,12 @@ class LinkQuoter(commands.Cog):
         mode = data.get("cross_guild_mode", "off")
         whitelisted = data.get("cross_guild_whitelist", set())
         ignored_chs = data.get("ignored_channels", set())
-        ignored_rls = data.get("ignored_roles", set())
-        allowed_rls = data.get("allowed_roles", set())
+        ignored_roles = data.get("ignored_roles", set())
+        allowed_roles = data.get("allowed_roles", set())
 
         ch_text = ", ".join(f"<#{cid}>" for cid in ignored_chs) if ignored_chs else "None"
-        role_text = ", ".join(f"<@&{rid}>" for rid in ignored_rls) if ignored_rls else "None"
-        allowed_role_text = ", ".join(f"<@&{rid}>" for rid in allowed_rls) if allowed_rls else "All Roles (Open)"
+        ignored_role_text = ", ".join(f"<@&{rid}>" for rid in ignored_roles) if ignored_roles else "None"
+        allowed_role_text = ", ".join(f"<@&{rid}>" for rid in allowed_roles) if allowed_roles else "All Roles (Open)"
         wl_text = ", ".join(f"`{gid}`" for gid in whitelisted) if whitelisted else "None"
 
         can_embed = ctx.channel.permissions_for(ctx.me).embed_links
@@ -590,7 +596,7 @@ class LinkQuoter(commands.Cog):
             embed.add_field(name="Server Whitelist", value=_clip(wl_text, 1024), inline=False)
             embed.add_field(name="Allowed Roles", value=_clip(allowed_role_text, 1024), inline=False)
             embed.add_field(name="Ignored Channels", value=_clip(ch_text, 1024), inline=False)
-            embed.add_field(name="Ignored Roles", value=_clip(role_text, 1024), inline=False)
+            embed.add_field(name="Ignored Roles", value=_clip(ignored_role_text, 1024), inline=False)
             await ctx.send(embed=embed)
         else:
             msg = (
@@ -601,6 +607,6 @@ class LinkQuoter(commands.Cog):
                 f"• Server Whitelist: {_clip(wl_text, 250)}\n"
                 f"• Allowed Roles: {_clip(allowed_role_text, 250)}\n"
                 f"• Ignored Channels: {_clip(ch_text, 250)}\n"
-                f"• Ignored Roles: {_clip(role_text, 250)}"
+                f"• Ignored Roles: {_clip(ignored_role_text, 250)}"
             )
             await ctx.send(_clip(msg, 1900))
