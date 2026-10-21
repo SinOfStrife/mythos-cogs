@@ -1,4 +1,5 @@
 import random
+import typing
 import discord
 from redbot.core import commands, Config
 from redbot.core.bot import Red
@@ -23,6 +24,9 @@ class Odysseus(commands.Cog):
             "telemachus_weight": 25, # Default 25% Telemachus
         }
         self.config.register_guild(**default_guild)
+        
+        # Cooldown mapping: 1 trigger per 5.0 seconds per channel to prevent spam
+        self.cooldown = commands.CooldownMapping.from_cooldown(1, 5.0, commands.BucketType.channel)
 
     async def cog_command_error(self, ctx: commands.Context, error: Exception):
         """Local error handler for Odysseus commands."""
@@ -40,7 +44,7 @@ class Odysseus(commands.Cog):
                 f"💡 Usage: `{ctx.clean_prefix}{ctx.command.qualified_name} {ctx.command.signature}`"
             )
         elif isinstance(error, commands.BadArgument):
-            await ctx.send("❌ One or more arguments are invalid. Make sure you are providing valid numbers or mentioning a valid text channel.")
+            await ctx.send("❌ One or more arguments are invalid. Make sure you are providing valid numbers or mentioning a valid text channel/thread.")
         elif isinstance(error, commands.CheckFailure):
             await ctx.send("❌ You do not have the required permissions (Manage Server or Administrator) to use this command.")
 
@@ -68,39 +72,47 @@ class Odysseus(commands.Cog):
 
         # Check if "odysseus" is in the message (case-insensitive)
         if "odysseus" in message.content.lower():
-            
-            # --- RARE 1% GIF EASTER EGG ---
-            if random.randint(1, 100) == 1:
-                await message.channel.send("https://klipy.com/gifs/odysseus-odysseus-epic")
+            # Apply channel-based cooldown / rate limiting
+            bucket = self.cooldown.get_bucket(message)
+            if bucket.update_rate_limit():
                 return
 
-            # --- STANDARD PENELOPE / TELEMACHUS ROLL ---
-            p_weight = await self.config.guild(guild).penelope_weight()
-            t_weight = await self.config.guild(guild).telemachus_weight()
+            try:
+                # --- RARE 1% GIF EASTER EGG ---
+                if random.randint(1, 100) == 1:
+                    await message.channel.send("https://klipy.com/gifs/odysseus-odysseus-epic")
+                    return
 
-            # Choose which character to send based on weights
-            chosen = random.choices(
-                ["Penelope", "Telemachus"], 
-                weights=[p_weight, t_weight], 
-                k=1
-            )[0]
-            
-            # Format Telemachus in all caps with an exclamation mark
-            if chosen == "Telemachus":
-                response = "TELEMACHUS!"
-            else:
-                response = "Penelope"
-            
-            await message.channel.send(response)
+                # --- STANDARD PENELOPE / TELEMACHUS ROLL ---
+                p_weight = await self.config.guild(guild).penelope_weight()
+                t_weight = await self.config.guild(guild).telemachus_weight()
+
+                # Choose which character to send based on weights
+                chosen = random.choices(
+                    ["Penelope", "Telemachus"], 
+                    weights=[p_weight, t_weight], 
+                    k=1
+                )[0]
+                
+                # Format Telemachus in all caps with an exclamation mark
+                if chosen == "Telemachus":
+                    response = "TELEMACHUS!"
+                else:
+                    response = "Penelope"
+                
+                await message.channel.send(response)
+            except discord.Forbidden:
+                # Silently catch if bot lacks permission to talk in this specific channel
+                pass
 
     # --- ADMIN CONFIGURATION COMMANDS ---
 
     @commands.guild_only()
-    @commands.group(name="ody")
+    @commands.group(name="ody", invoke_without_subcommand=True)
     @commands.admin_or_permissions(manage_guild=True)
     async def ody(self, ctx: commands.Context):
         """Configure the Odysseus easter egg settings."""
-        pass
+        await ctx.send_help(ctx.command)
 
     @ody.command(name="toggle")
     async def ody_toggle(self, ctx: commands.Context):
@@ -162,8 +174,8 @@ class Odysseus(commands.Cog):
         pass
 
     @ody_channel.command(name="allow")
-    async def channel_allow(self, ctx: commands.Context, channel: discord.TextChannel):
-        """Add a channel to the allowed list (whitelisting)."""
+    async def channel_allow(self, ctx: commands.Context, channel: typing.Union[discord.TextChannel, discord.Thread]):
+        """Add a channel or thread to the allowed list (whitelisting)."""
         allowed = await self.config.guild(ctx.guild).allowed_channels()
         if channel.id in allowed:
             return await ctx.send(f"❌ {channel.mention} is already in the allowed channels list.")
@@ -173,8 +185,8 @@ class Odysseus(commands.Cog):
         await ctx.send(f"✅ Added {channel.mention} to the allowed channels.")
 
     @ody_channel.command(name="disallow")
-    async def channel_disallow(self, ctx: commands.Context, channel: discord.TextChannel):
-        """Remove a channel from the allowed list."""
+    async def channel_disallow(self, ctx: commands.Context, channel: typing.Union[discord.TextChannel, discord.Thread]):
+        """Remove a channel or thread from the allowed list."""
         allowed = await self.config.guild(ctx.guild).allowed_channels()
         if channel.id not in allowed:
             return await ctx.send(f"❌ {channel.mention} is not in the allowed channels list.")
@@ -184,8 +196,8 @@ class Odysseus(commands.Cog):
         await ctx.send(f"✅ Removed {channel.mention} from the allowed channels.")
 
     @ody_channel.command(name="blacklist")
-    async def channel_blacklist(self, ctx: commands.Context, channel: discord.TextChannel):
-        """Blacklist a channel so responses never happen there."""
+    async def channel_blacklist(self, ctx: commands.Context, channel: typing.Union[discord.TextChannel, discord.Thread]):
+        """Blacklist a channel or thread so responses never happen there."""
         blacklisted = await self.config.guild(ctx.guild).blacklisted_channels()
         if channel.id in blacklisted:
             return await ctx.send(f"❌ {channel.mention} is already blacklisted.")
@@ -195,8 +207,8 @@ class Odysseus(commands.Cog):
         await ctx.send(f"✅ Blacklisted {channel.mention}. Odysseus will stay quiet there.")
 
     @ody_channel.command(name="unblacklist")
-    async def channel_unblacklist(self, ctx: commands.Context, channel: discord.TextChannel):
-        """Remove a channel from the blacklist."""
+    async def channel_unblacklist(self, ctx: commands.Context, channel: typing.Union[discord.TextChannel, discord.Thread]):
+        """Remove a channel or thread from the blacklist."""
         blacklisted = await self.config.guild(ctx.guild).blacklisted_channels()
         if channel.id not in blacklisted:
             return await ctx.send(f"❌ {channel.mention} is not blacklisted.")
