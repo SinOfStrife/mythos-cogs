@@ -3,6 +3,8 @@ import discord
 from redbot.core import commands, Config
 from redbot.core.bot import Red
 
+__red_end_user_data_statement__ = "This cog does not persistently store data about users."
+
 class Odysseus(commands.Cog):
     """Responds to mentions of Odysseus with his family."""
 
@@ -14,13 +16,33 @@ class Odysseus(commands.Cog):
         
         # Set default server settings (Disabled by default)
         default_guild = {
-            "enabled": False,        # Changed to False so it starts turned off
+            "enabled": False,        # Starts turned off
             "allowed_channels": [],  # Empty list means active everywhere (unless blacklisted)
             "blacklisted_channels": [], # List of blocked channels
             "penelope_weight": 75,   # Default 75% Penelope
             "telemachus_weight": 25, # Default 25% Telemachus
         }
         self.config.register_guild(**default_guild)
+
+    async def cog_command_error(self, ctx: commands.Context, error: Exception):
+        """Local error handler for Odysseus commands."""
+        if hasattr(ctx.command, "on_error"):
+            return
+
+        error = getattr(error, "original", error)
+
+        if isinstance(error, commands.NoPrivateMessage):
+            await ctx.send("❌ This command cannot be used in Direct Messages. Please use it inside a server.")
+        elif isinstance(error, commands.MissingRequiredArgument):
+            param_name = error.param.name
+            await ctx.send(
+                f"❌ You are missing the **{param_name}** argument.\n"
+                f"💡 Usage: `{ctx.clean_prefix}{ctx.command.qualified_name} {ctx.command.signature}`"
+            )
+        elif isinstance(error, commands.BadArgument):
+            await ctx.send("❌ One or more arguments are invalid. Make sure you are providing valid numbers or mentioning a valid text channel.")
+        elif isinstance(error, commands.CheckFailure):
+            await ctx.send("❌ You do not have the required permissions (Manage Server or Administrator) to use this command.")
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -73,6 +95,7 @@ class Odysseus(commands.Cog):
 
     # --- ADMIN CONFIGURATION COMMANDS ---
 
+    @commands.guild_only()
     @commands.group(name="ody")
     @commands.admin_or_permissions(manage_guild=True)
     async def ody(self, ctx: commands.Context):
