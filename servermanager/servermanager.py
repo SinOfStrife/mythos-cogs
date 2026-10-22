@@ -271,39 +271,54 @@ class ServerManagerView(discord.ui.View):
             return self.build_summary_embed()
         return self.build_guild_embed(self.guilds[self.current_page - 1])
 
+    async def _safe_edit(self, interaction: discord.Interaction) -> None:
+        try:
+            embed = await self.get_current_embed()
+            self.update_button_states()
+            if interaction.response.is_done():
+                await interaction.edit_message(embed=embed, view=self)
+            else:
+                await interaction.response.edit_message(embed=embed, view=self)
+        except Exception as e:
+            log.exception("Error updating ServerManagerView page")
+            with suppress(discord.HTTPException):
+                if interaction.response.is_done():
+                    await interaction.followup.send(f"❌ An error occurred: `{e}`", ephemeral=True)
+                else:
+                    await interaction.response.send_message(f"❌ An error occurred: `{e}`", ephemeral=True)
+
     @discord.ui.button(emoji="⏪", style=discord.ButtonStyle.primary, row=0)
     async def first_page(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         self.current_page = 0
-        self.update_button_states()
-        await interaction.response.edit_message(embed=await self.get_current_embed(), view=self)
+        await self._safe_edit(interaction)
 
     @discord.ui.button(emoji="◀️", style=discord.ButtonStyle.primary, row=0)
     async def prev_page(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if self.current_page > 0:
             self.current_page -= 1
-        self.update_button_states()
-        await interaction.response.edit_message(embed=await self.get_current_embed(), view=self)
+        await self._safe_edit(interaction)
 
     @discord.ui.button(emoji="✖️", style=discord.ButtonStyle.danger, row=0)
     async def close_menu(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await interaction.response.defer()
-        self.stop()
-        with suppress(discord.HTTPException):
-            if interaction.message:
-                await interaction.message.delete()
+        try:
+            await interaction.response.defer()
+            self.stop()
+            if self.message:
+                with suppress(discord.HTTPException):
+                    await self.message.delete()
+        except Exception:
+            log.exception("Error closing menu")
 
     @discord.ui.button(emoji="▶️", style=discord.ButtonStyle.primary, row=0)
     async def next_page(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if self.current_page < self.max_page:
             self.current_page += 1
-        self.update_button_states()
-        await interaction.response.edit_message(embed=await self.get_current_embed(), view=self)
+        await self._safe_edit(interaction)
 
     @discord.ui.button(emoji="⏩", style=discord.ButtonStyle.primary, row=0)
     async def last_page(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         self.current_page = self.max_page
-        self.update_button_states()
-        await interaction.response.edit_message(embed=await self.get_current_embed(), view=self)
+        await self._safe_edit(interaction)
 
     @discord.ui.button(label="Invite", emoji="🔗", style=discord.ButtonStyle.success, row=1)
     async def invite_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -311,54 +326,70 @@ class ServerManagerView(discord.ui.View):
             await interaction.response.send_message("Cannot generate an invite for the global summary page.", ephemeral=True)
             return
 
-        await interaction.response.defer(ephemeral=True)
-        guild = self.guilds[self.current_page - 1]
-        invite_url = None
+        try:
+            await interaction.response.defer(ephemeral=True)
+            guild = self.guilds[self.current_page - 1]
+            invite_url = None
 
-        if guild.vanity_url:
-            invite_url = guild.vanity_url
-        else:
-            try:
-                invites = await guild.invites()
-                if invites:
-                    invite_url = invites[0].url
-            except (discord.Forbidden, discord.HTTPException):
-                pass
+            if guild.vanity_url:
+                invite_url = guild.vanity_url
+            else:
+                try:
+                    invites = await guild.invites()
+                    if invites:
+                        invite_url = invites[0].url
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
 
-        if not invite_url:
-            for channel in guild.text_channels:
-                if channel.permissions_for(guild.me).create_instant_invite:
-                    try:
-                        invite = await channel.create_invite(max_age=300, max_uses=1, reason="Owner requested server invite lookup.")
-                        invite_url = invite.url
-                        break
-                    except (discord.Forbidden, discord.HTTPException):
-                        continue
+            if not invite_url:
+                for channel in guild.text_channels:
+                    if channel.permissions_for(guild.me).create_instant_invite:
+                        try:
+                            invite = await channel.create_invite(max_age=300, max_uses=1, reason="Owner requested server invite lookup.")
+                            invite_url = invite.url
+                            break
+                        except (discord.Forbidden, discord.HTTPException):
+                            continue
 
-        if invite_url:
-            await interaction.followup.send(f"🔗 Invite link for **{guild.name}**: {invite_url}", ephemeral=True)
-        else:
-            await interaction.followup.send(f"❌ Unable to retrieve an invite link for **{guild.name}** (Missing permissions).", ephemeral=True)
+            if invite_url:
+                await interaction.followup.send(f"🔗 Invite link for **{guild.name}**: {invite_url}", ephemeral=True)
+            else:
+                await interaction.followup.send(f"❌ Unable to retrieve an invite link for **{guild.name}** (Missing permissions).", ephemeral=True)
+        except Exception as e:
+            log.exception("Error in invite button")
+            with suppress(discord.HTTPException):
+                if interaction.response.is_done():
+                    await interaction.followup.send(f"❌ An error occurred: `{e}`", ephemeral=True)
+                else:
+                    await interaction.response.send_message(f"❌ An error occurred: `{e}`", ephemeral=True)
 
     @discord.ui.button(label="Leave", emoji="🚪", style=discord.ButtonStyle.danger, row=1)
     async def leave_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if self.current_page == 0:
             return
 
-        guild = self.guilds[self.current_page - 1]
-        confirm_view = LeaveConfirmationView(guild, self.author_id)
-        await interaction.response.send_message(
-            f"⚠️ **Are you sure you want the bot to leave `{guild.name}` (`{guild.id}`)?**\nThis action cannot be undone.",
-            view=confirm_view,
-            ephemeral=True,
-        )
-        confirm_view.message = await interaction.original_response()
+        try:
+            guild = self.guilds[self.current_page - 1]
+            confirm_view = LeaveConfirmationView(guild, self.author_id)
+            await interaction.response.send_message(
+                f"⚠️ **Are you sure you want the bot to leave `{guild.name}` (`{guild.id}`)?**\nThis action cannot be undone.",
+                view=confirm_view,
+                ephemeral=True,
+            )
+            confirm_view.message = await interaction.original_response()
+        except Exception as e:
+            log.exception("Error in leave button")
+            with suppress(discord.HTTPException):
+                if interaction.response.is_done():
+                    await interaction.followup.send(f"❌ An error occurred: `{e}`", ephemeral=True)
+                else:
+                    await interaction.response.send_message(f"❌ An error occurred: `{e}`", ephemeral=True)
 
 
 class ServerManager(commands.Cog):
     """Owner-only interactive server management suite."""
 
-    __version__ = "1.0.4"
+    __version__ = "1.0.5"
     __author__ = ["SinOfStrife"]
     __red_end_user_data_statement__ = "This cog does not persistently store any personal or user data."
 
