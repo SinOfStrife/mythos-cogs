@@ -63,7 +63,7 @@ class LeaveConfirmationView(discord.ui.View):
             with suppress(discord.HTTPException):
                 await self.message.delete()
 
-    @discord.ui.button(label="Confirm Leave", style=discord.ButtonStyle.danger, emoji="⚠️")
+    @discord.ui.button(label="Confirm Leave", style=discord.ButtonStyle.danger, emoji="⚠️", row=0)
     async def confirm_leave(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         try:
             guild_name = self.guild.name
@@ -81,7 +81,7 @@ class LeaveConfirmationView(discord.ui.View):
                 view=None,
             )
 
-    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, emoji="✖️")
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, emoji="✖️", row=0)
     async def cancel_leave(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         self.stop()
         await interaction.response.edit_message(content="❌ Server leave action cancelled.", view=None)
@@ -113,8 +113,8 @@ class ServerManagerView(discord.ui.View):
     def update_button_states(self) -> None:
         self.first_page.disabled = self.current_page == 0
         self.prev_page.disabled = self.current_page == 0
-        self.next_page.disabled = self.current_page == self.max_page
-        self.last_page.disabled = self.current_page == self.max_page
+        self.next_page.disabled = self.current_page >= self.max_page
+        self.last_page.disabled = self.current_page >= self.max_page
         self.invite_button.disabled = self.current_page == 0
         self.leave_button.disabled = self.current_page == 0
 
@@ -122,7 +122,11 @@ class ServerManagerView(discord.ui.View):
         total_servers = len(self.guilds)
         total_members = sum(g.member_count or 0 for g in self.guilds)
 
-        oldest_guild = min(self.guilds, key=lambda g: g.created_at) if self.guilds else None
+        oldest_guild = min(
+            self.guilds,
+            key=lambda g: g.me.joined_at if (g.me and g.me.joined_at) else g.created_at
+        ) if self.guilds else None
+        
         largest_guild = max(self.guilds, key=lambda g: g.member_count or 0) if self.guilds else None
 
         embed = discord.Embed(
@@ -132,12 +136,21 @@ class ServerManagerView(discord.ui.View):
         )
         embed.add_field(name="Total Servers", value=f"`{total_servers:,}`", inline=True)
         embed.add_field(name="Total Member Reach", value=f"`{total_members:,}`", inline=True)
-        if oldest_guild:
+        
+        if oldest_guild and oldest_guild.me and oldest_guild.me.joined_at:
+            join_timestamp = int(oldest_guild.me.joined_at.timestamp())
             embed.add_field(
-                name="Oldest Server",
+                name="Oldest Bot Join",
+                value=f"**{oldest_guild.name}**\n(<t:{join_timestamp}:R>)",
+                inline=False,
+            )
+        elif oldest_guild:
+            embed.add_field(
+                name="Oldest Bot Join",
                 value=f"**{oldest_guild.name}**\n(<t:{int(oldest_guild.created_at.timestamp())}:R>)",
                 inline=False,
             )
+
         if largest_guild:
             embed.add_field(
                 name="Largest Server",
@@ -258,40 +271,41 @@ class ServerManagerView(discord.ui.View):
             return self.build_summary_embed()
         return self.build_guild_embed(self.guilds[self.current_page - 1])
 
-    @discord.ui.button(emoji="⏪", style=discord.ButtonStyle.primary)
+    @discord.ui.button(emoji="⏪", style=discord.ButtonStyle.primary, row=0)
     async def first_page(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         self.current_page = 0
         self.update_button_states()
         await interaction.response.edit_message(embed=await self.get_current_embed(), view=self)
 
-    @discord.ui.button(emoji="◀️", style=discord.ButtonStyle.primary)
+    @discord.ui.button(emoji="◀️", style=discord.ButtonStyle.primary, row=0)
     async def prev_page(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if self.current_page > 0:
             self.current_page -= 1
         self.update_button_states()
         await interaction.response.edit_message(embed=await self.get_current_embed(), view=self)
 
-    @discord.ui.button(emoji="✖️", style=discord.ButtonStyle.danger)
+    @discord.ui.button(emoji="✖️", style=discord.ButtonStyle.danger, row=0)
     async def close_menu(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.defer()
         self.stop()
         with suppress(discord.HTTPException):
-            await interaction.message.delete()
+            if interaction.message:
+                await interaction.message.delete()
 
-    @discord.ui.button(emoji="▶️", style=discord.ButtonStyle.primary)
+    @discord.ui.button(emoji="▶️", style=discord.ButtonStyle.primary, row=0)
     async def next_page(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if self.current_page < self.max_page:
             self.current_page += 1
         self.update_button_states()
         await interaction.response.edit_message(embed=await self.get_current_embed(), view=self)
 
-    @discord.ui.button(emoji="⏩", style=discord.ButtonStyle.primary)
+    @discord.ui.button(emoji="⏩", style=discord.ButtonStyle.primary, row=0)
     async def last_page(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         self.current_page = self.max_page
         self.update_button_states()
         await interaction.response.edit_message(embed=await self.get_current_embed(), view=self)
 
-    @discord.ui.button(label="Invite", emoji="🔗", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="Invite", emoji="🔗", style=discord.ButtonStyle.success, row=1)
     async def invite_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if self.current_page == 0:
             await interaction.response.send_message("Cannot generate an invite for the global summary page.", ephemeral=True)
@@ -326,7 +340,7 @@ class ServerManagerView(discord.ui.View):
         else:
             await interaction.followup.send(f"❌ Unable to retrieve an invite link for **{guild.name}** (Missing permissions).", ephemeral=True)
 
-    @discord.ui.button(label="Leave", emoji="🚪", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="Leave", emoji="🚪", style=discord.ButtonStyle.danger, row=1)
     async def leave_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if self.current_page == 0:
             return
@@ -344,7 +358,7 @@ class ServerManagerView(discord.ui.View):
 class ServerManager(commands.Cog):
     """Owner-only interactive server management suite."""
 
-    __version__ = "1.0.3"
+    __version__ = "1.0.4"
     __author__ = ["SinOfStrife"]
     __red_end_user_data_statement__ = "This cog does not persistently store any personal or user data."
 
