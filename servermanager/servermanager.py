@@ -195,7 +195,7 @@ class ServerManagerView(discord.ui.View):
 
         afk_info = f"{guild.afk_channel.mention} (`{guild.afk_timeout // 60}m`)" if guild.afk_channel else "Not set"
         locale = str(guild.preferred_locale)
-        mfa = "Required" if guild.mfa_level == discord.MFALevel.require else "Optional"
+        mfa = "Required" if guild.mfa_level else "Optional"
 
         formatted_features = [
             FEATURE_MAPPING.get(f, f.replace("_", " ").title())
@@ -389,7 +389,7 @@ class ServerManagerView(discord.ui.View):
 class ServerManager(commands.Cog):
     """Owner-only interactive server management suite."""
 
-    __version__ = "1.0.5"
+    __version__ = "1.0.6"
     __author__ = ["SinOfStrife"]
     __red_end_user_data_statement__ = "This cog does not persistently store any personal or user data."
 
