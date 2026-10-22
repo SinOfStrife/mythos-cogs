@@ -61,7 +61,7 @@ class LeaveConfirmationView(discord.ui.View):
         self.stop()
         if self.message:
             with suppress(discord.HTTPException):
-                await self.message.edit(view=None)
+                await self.message.delete()
 
     @discord.ui.button(label="Confirm Leave", style=discord.ButtonStyle.danger, emoji="⚠️")
     async def confirm_leave(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -135,7 +135,7 @@ class ServerManagerView(discord.ui.View):
         if oldest_guild:
             embed.add_field(
                 name="Oldest Server",
-                value=f"**{oldest_guild.name}**\n(`<t:{int(oldest_guild.created_at.timestamp())}:R>`)",
+                value=f"**{oldest_guild.name}**\n(<t:{int(oldest_guild.created_at.timestamp())}:R>)",
                 inline=False,
             )
         if largest_guild:
@@ -172,6 +172,17 @@ class ServerManagerView(discord.ui.View):
         stage_channels = len(guild.stage_channels)
         forum_channels = len(getattr(guild, "forum_channels", []))
         thread_count = len(guild.threads) if hasattr(guild, "threads") else 0
+        role_count = len(guild.roles)
+
+        static_emojis = sum(1 for e in guild.emojis if not e.animated)
+        animated_emojis = sum(1 for e in guild.emojis if e.animated)
+        sticker_count = len(guild.stickers)
+        soundboard_count = len(getattr(guild, "soundboard_sounds", []))
+        event_count = len(guild.scheduled_events)
+
+        afk_info = f"{guild.afk_channel.mention} (`{guild.afk_timeout // 60}m`)" if guild.afk_channel else "Not set"
+        locale = str(guild.preferred_locale)
+        mfa = "Required" if guild.mfa_level == discord.MFALevel.require else "Optional"
 
         formatted_features = [
             FEATURE_MAPPING.get(f, f.replace("_", " ").title())
@@ -181,7 +192,8 @@ class ServerManagerView(discord.ui.View):
         if len(formatted_features) > 15:
             features_str += f" *...and {len(formatted_features) - 15} more*"
 
-        owner_mention = guild.owner.mention if guild.owner else f"<@{guild.owner_id}>"
+        owner = guild.owner or self.bot.get_user(guild.owner_id)
+        owner_str = f"{owner.mention} (`{owner}`)" if owner else f"<@{guild.owner_id}> (`ID: {guild.owner_id}`)"
         verification = VERIFICATION_LEVELS.get(guild.verification_level, "Unknown")
 
         embed = discord.Embed(
@@ -199,14 +211,16 @@ class ServerManagerView(discord.ui.View):
         embed.add_field(
             name="📌 Utility Info",
             value=f"**ID:** `{guild.id}`\n"
-                  f"**Owner:** {owner_mention}\n"
+                  f"**Owner:** {owner_str}\n"
                   f"**Verification:** `{verification}`\n"
+                  f"**Staff 2FA:** `{mfa}`\n"
+                  f"**Locale:** `{locale}`\n"
                   f"**Created:** {age_relative}",
             inline=True,
         )
         embed.add_field(
-            name="👥 Members",
-            value=member_value,
+            name="👥 Members & Roles",
+            value=f"{member_value}\n**Roles:** `{role_count:,}`",
             inline=True,
         )
         embed.add_field(
@@ -216,10 +230,18 @@ class ServerManagerView(discord.ui.View):
             inline=True,
         )
         embed.add_field(
-            name="📁 Channels & Threads",
+            name="📁 Channels & Audio",
             value=f"**Text:** `{text_channels}` | **Voice:** `{voice_channels}`\n"
                   f"**Stages:** `{stage_channels}` | **Forums:** `{forum_channels}`\n"
-                  f"**Active Threads:** `{thread_count}`",
+                  f"**Active Threads:** `{thread_count}`\n"
+                  f"**AFK Voice:** {afk_info}",
+            inline=False,
+        )
+        embed.add_field(
+            name="🎨 Expressions & Events",
+            value=f"**Emojis:** `{static_emojis} static, {animated_emojis} animated`\n"
+                  f"**Stickers:** `{sticker_count}` | **Soundboard:** `{soundboard_count}`\n"
+                  f"**Scheduled Events:** `{event_count}`",
             inline=False,
         )
         embed.add_field(
@@ -322,7 +344,7 @@ class ServerManagerView(discord.ui.View):
 class ServerManager(commands.Cog):
     """Owner-only interactive server management suite."""
 
-    __version__ = "1.0.2"
+    __version__ = "1.0.3"
     __author__ = ["SinOfStrife"]
     __red_end_user_data_statement__ = "This cog does not persistently store any personal or user data."
 
