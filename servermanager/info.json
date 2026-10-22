@@ -1,0 +1,16 @@
+{
+    "author": [
+        "SinOfStrife"
+    ],
+    "name": "ServerManager",
+    "short": "Owner-only interactive server management.",
+    "description": "Browse all servers the bot belongs to in a paginated dashboard, inspect individual server statistics and remotely leave servers.",
+    "install_msg": "Thanks for installing ServerManager! Use `[p]slist` to browse servers or `[p]sinfo <guild_id>` to inspect a single server.",
+    "tags": ["utility", "owner", "management", "server"],
+    "min_bot_version": "3.5.0",
+    "requirements": [],
+    "hidden": false,
+    "disabled": false,
+    "type": "COG",
+    "end_user_data_statement": "This cog does not persistently store any personal or user data."
+}
