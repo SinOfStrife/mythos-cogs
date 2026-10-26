@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING, Dict, List, Literal, Optional, Set, Tuple, Union
 
 import contextlib
@@ -53,6 +54,28 @@ def _format_str(string: str, replace: Dict[str, str]) -> str:
     for key, value in replace.items():
         string = string.replace(key, value)
     return string
+
+
+async def _resolve_text_channel(ctx: commands.Context, arg: str) -> Optional[discord.TextChannel]:
+    match = re.match(r"<#([0-9]+)>", arg)
+    chan_id = int(match.group(1)) if match else None
+    if not chan_id:
+        with contextlib.suppress(ValueError):
+            chan_id = int(arg)
+
+    if chan_id:
+        chan = ctx.bot.get_channel(chan_id)
+        if not chan:
+            with contextlib.suppress(discord.HTTPException):
+                chan = await ctx.bot.fetch_channel(chan_id)
+        if isinstance(chan, discord.TextChannel):
+            return chan
+
+    if ctx.guild:
+        with contextlib.suppress(commands.BadArgument):
+            return await commands.TextChannelConverter().convert(ctx, arg)
+
+    return None
 
 
 async def _filter_internal(c: commands.Context, u: UsersOrRoles) -> Tuple[Set[int], Optional[str]]:
@@ -219,7 +242,7 @@ class AdvancedBlacklist(commands.Cog):
         target_names = []
         for item in users_or_roles:
             uid = getattr(item, "id", item)
-            obj = self.bot.get_user(uid) or (guild.get_role(uid) if guild else None)
+            obj = self.bot.get_user(int(uid)) or (guild.get_role(int(uid)) if guild else None)
             target_names.append(f"{obj.name if obj else 'Unknown'} (`{uid}`)")
 
         targets_str = ", ".join(target_names) if target_names else "All Entries"
@@ -417,20 +440,30 @@ class AdvancedBlacklist(commands.Cog):
 
     @blocklist.command(name="logchannel")
     async def blocklist_logchannel(
-        self, ctx: commands.Context, channel: Optional[discord.TextChannel] = None
+        self, ctx: commands.Context, *, channel: Optional[str] = None
     ) -> None:
         """Set or view the audit log channel for the global blocklist."""
         if channel is None:
             chan_id = await self.config.log_channel()
             chan = self.bot.get_channel(chan_id) if chan_id else None
             if chan:
-                await ctx.send(f"Current global blocklist log channel is {chan.mention}.")
+                await ctx.send(f"Current global blocklist log channel is {chan.mention} (`{chan.id}`).")
             else:
                 await ctx.send("No global blocklist log channel is currently configured.")
             return
 
-        await self.config.log_channel.set(channel.id)
-        await ctx.send(f"Global blocklist audit log channel set to {channel.mention}.")
+        if channel.lower() in ("none", "disable", "off"):
+            await self.config.log_channel.set(None)
+            await ctx.send("Global blocklist audit log channel has been disabled.")
+            return
+
+        text_chan = await _resolve_text_channel(ctx, channel)
+        if not text_chan:
+            await ctx.send("I could not find a valid text channel with that mention or ID.")
+            return
+
+        await self.config.log_channel.set(text_chan.id)
+        await ctx.send(f"Global blocklist audit log channel set to {text_chan.mention} (`{text_chan.id}`).")
 
     @blocklist.command(name="info")
     async def blocklist_info(self, ctx: commands.Context, user_or_role: UserOrRole) -> None:
@@ -507,20 +540,30 @@ class AdvancedBlacklist(commands.Cog):
 
     @allowlist.command(name="logchannel")
     async def allowlist_logchannel(
-        self, ctx: commands.Context, channel: Optional[discord.TextChannel] = None
+        self, ctx: commands.Context, *, channel: Optional[str] = None
     ) -> None:
         """Set or view the audit log channel for the global allowlist."""
         if channel is None:
             chan_id = await self.config.log_channel()
             chan = self.bot.get_channel(chan_id) if chan_id else None
             if chan:
-                await ctx.send(f"Current global allowlist log channel is {chan.mention}.")
+                await ctx.send(f"Current global allowlist log channel is {chan.mention} (`{chan.id}`).")
             else:
                 await ctx.send("No global allowlist log channel is currently configured.")
             return
 
-        await self.config.log_channel.set(channel.id)
-        await ctx.send(f"Global allowlist audit log channel set to {channel.mention}.")
+        if channel.lower() in ("none", "disable", "off"):
+            await self.config.log_channel.set(None)
+            await ctx.send("Global allowlist audit log channel has been disabled.")
+            return
+
+        text_chan = await _resolve_text_channel(ctx, channel)
+        if not text_chan:
+            await ctx.send("I could not find a valid text channel with that mention or ID.")
+            return
+
+        await self.config.log_channel.set(text_chan.id)
+        await ctx.send(f"Global allowlist audit log channel set to {text_chan.mention} (`{text_chan.id}`).")
 
     @allowlist.command(name="info")
     async def allowlist_info(self, ctx: commands.Context, user_or_role: UserOrRole) -> None:
