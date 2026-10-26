@@ -230,6 +230,7 @@ class AdvancedBlacklist(commands.Cog):
         guild: Optional[discord.Guild] = None,
         reason: Optional[str] = None,
     ) -> None:
+        """Send an audit log embed to the configured channel."""
         config = self.config.guild(guild) if guild else self.config
         log_channel_id = await config.log_channel()
         if not log_channel_id:
@@ -275,6 +276,7 @@ class AdvancedBlacklist(commands.Cog):
         guild: Optional[discord.Guild] = None,
         override: bool = False,
     ) -> None:
+        """Add users or roles to the specified list with a reason."""
         config = getattr((self.config.guild(guild) if guild else self.config), white_black_list)
         async with config() as blacklist:
             for item in users_or_roles:
@@ -299,6 +301,7 @@ class AdvancedBlacklist(commands.Cog):
         guild: Optional[discord.Guild] = None,
         override: bool = False,
     ) -> None:
+        """Remove users or roles from the specified list."""
         config = getattr((self.config.guild(guild) if guild else self.config), white_black_list)
         async with config() as blacklist:
             for item in users_or_roles:
@@ -325,6 +328,7 @@ class AdvancedBlacklist(commands.Cog):
         guild: Optional[discord.Guild] = None,
         override: bool = False,
     ) -> None:
+        """Clear all entries from the specified list."""
         if white_black_list == "whitelist":
             self._cache.clear_whitelist(guild)
         else:
@@ -341,6 +345,7 @@ class AdvancedBlacklist(commands.Cog):
     async def get_list(
         self, *, white_black_list: _WhiteBlacklist, guild: Optional[discord.Guild] = None
     ) -> Dict[str, str]:
+        """Fetch the list mapping of users/roles to reasons."""
         if white_black_list == "whitelist":
             blacklist = self._cache.get_whitelist(guild)
         else:
@@ -372,6 +377,7 @@ class AdvancedBlacklist(commands.Cog):
         reason: str,
         guild: Optional[discord.Guild] = None,
     ) -> None:
+        """Edit the reason for an existing entry."""
         config = getattr((self.config.guild(guild) if guild else self.config), white_black_list)
         async with config() as blacklist:
             actual = str(getattr(user_or_role, "id", user_or_role))
@@ -389,6 +395,7 @@ class AdvancedBlacklist(commands.Cog):
         white_black_list: _WhiteBlacklist,
         guild: Optional[discord.Guild] = None,
     ) -> bool:
+        """Check if a user or role is present in the specified list."""
         actual = getattr(user_or_role, "id", user_or_role)
         data = await self.get_list(white_black_list=white_black_list, guild=guild)
         return actual in data or str(actual) in data
@@ -400,6 +407,7 @@ class AdvancedBlacklist(commands.Cog):
         white_black_list: _WhiteBlacklist,
         guild: Optional[discord.Guild] = None,
     ) -> None:
+        """Look up details and reason for a specific entry."""
         uid = str(getattr(user_or_role, "id", user_or_role))
         data = await self.get_list(white_black_list=white_black_list, guild=guild)
         
@@ -435,7 +443,7 @@ class AdvancedBlacklist(commands.Cog):
     @commands.group(name="blocklist", aliases=["denylist", "blacklist"])
     @commands.is_owner()
     async def blocklist(self, ctx: commands.Context) -> None:
-        r"""Commands manage the global blocklist on [botname]."""
+        """Manage the global blocklist on the bot."""
         pass
 
     @blocklist.command(name="logchannel")
@@ -472,6 +480,7 @@ class AdvancedBlacklist(commands.Cog):
 
     @blocklist.command(name="format")
     async def blocklist_format(self, ctx: commands.Context) -> None:
+        """Customize the display format for the global blocklist list view."""
         current = await self.config.format()
         data = await get_source(
             ctx, await ctx.embed_requested(), "AdvancedBlacklist Format", settings=current
@@ -486,6 +495,7 @@ class AdvancedBlacklist(commands.Cog):
         *,
         reason: Optional[str] = None,
     ) -> None:
+        """Add users or roles to the global blocklist."""
         worked, users_or_roles = await _filter_bots(ctx, users_roles, "blacklist")
         if not worked:
             return
@@ -501,6 +511,7 @@ class AdvancedBlacklist(commands.Cog):
 
     @blocklist.command(name="remove", aliases=["del", "delete"])
     async def blocklist_remove(self, ctx: commands.Context, users_roles: GreedyUserOrRole) -> None:
+        """Remove users or roles from the global blocklist."""
         worked, users_or_roles = await _filter_bots(ctx, users_roles, "blacklist")
         if not worked:
             return
@@ -515,6 +526,7 @@ class AdvancedBlacklist(commands.Cog):
     async def blocklist_edit(
         self, ctx: commands.Context, user_or_role: UserOrRole, *, reason: str
     ) -> None:
+        """Edit the reason for an entry in the global blocklist."""
         if isinstance(user_or_role, discord.Member) and user_or_role.bot:
             await ctx.send("That user is a bot!")
             return
@@ -526,16 +538,18 @@ class AdvancedBlacklist(commands.Cog):
 
     @blocklist.command(name="list")
     async def blocklist_list(self, ctx: commands.Context) -> None:
+        """List all entries on the global blocklist."""
         await self.send_list(ctx, white_black_list="blacklist", guild=None)
 
     @blocklist.command(name="clear")
     async def blocklist_clear(self, ctx: commands.Context, confirm: bool = False) -> None:
+        """Clear all entries from the global blocklist."""
         await self._handle_clearing(ctx, confirm, "blacklist", None)
 
     @commands.group(name="allowlist", aliases=["whitelist"])
     @commands.is_owner()
     async def allowlist(self, ctx: commands.Context) -> None:
-        r"""Commands managing the global allowlist on [botname]."""
+        """Manage the global allowlist on the bot."""
         pass
 
     @allowlist.command(name="logchannel")
@@ -578,6 +592,7 @@ class AdvancedBlacklist(commands.Cog):
         *,
         reason: Optional[str] = None,
     ) -> None:
+        """Add users or roles to the global allowlist."""
         worked, users_or_roles = await _filter_bots(ctx, users_roles, "whitelist")
         if not worked:
             return
@@ -598,6 +613,7 @@ class AdvancedBlacklist(commands.Cog):
     async def allowlist_edit(
         self, ctx: commands.Context, user_or_role: UserOrRole, *, reason: str
     ) -> None:
+        """Edit the reason for an entry in the global allowlist."""
         if isinstance(user_or_role, discord.Member) and user_or_role.bot:
             await ctx.send("That user is a bot!")
             return
@@ -610,6 +626,7 @@ class AdvancedBlacklist(commands.Cog):
 
     @allowlist.command(name="remove", aliases=["del", "delete"])
     async def allowlist_remove(self, ctx: commands.Context, users_roles: GreedyUserOrRole) -> None:
+        """Remove users or roles from the global allowlist."""
         worked, users_or_roles = await _filter_bots(ctx, users_roles, "whitelist")
         if not worked:
             return
@@ -622,10 +639,12 @@ class AdvancedBlacklist(commands.Cog):
 
     @allowlist.command(name="list")
     async def allowlist_list(self, ctx: commands.Context) -> None:
+        """List all entries on the global allowlist."""
         await self.send_list(ctx, white_black_list="whitelist", guild=None)
 
     @allowlist.command(name="clear")
     async def allowlist_clear(self, ctx: commands.Context, confirm: bool = False) -> None:
+        """Clear all entries from the global allowlist."""
         await self._handle_clearing(ctx, confirm, "whitelist", None)
 
     async def _handle_clearing(
@@ -649,7 +668,7 @@ class AdvancedBlacklist(commands.Cog):
     @commands.guild_only()
     @commands.admin_or_permissions(administrator=True)
     async def local_blocklist(self, ctx: commands.Context) -> None:
-        r"""Manage the users/roles on the local blocklist"""
+        """Manage the users/roles on the local blocklist."""
         pass
 
     @local_blocklist.command(name="logchannel")
@@ -686,6 +705,7 @@ class AdvancedBlacklist(commands.Cog):
         *,
         reason: Optional[str] = None,
     ) -> None:
+        """Add users or roles to the local blocklist."""
         if TYPE_CHECKING:
             assert ctx.guild is not None
             assert isinstance(ctx.author, discord.Member)
@@ -712,6 +732,7 @@ class AdvancedBlacklist(commands.Cog):
     async def local_blocklist_edit(
         self, ctx: commands.Context, user_or_role: UserOrRole, *, reason: str
     ) -> None:
+        """Edit the reason for an entry in the local blocklist."""
         if TYPE_CHECKING:
             assert ctx.guild is not None
         if isinstance(user_or_role, discord.Member) and user_or_role.bot:
@@ -729,6 +750,7 @@ class AdvancedBlacklist(commands.Cog):
     async def local_blocklist_remove(
         self, ctx: commands.Context, users_or_roles: GreedyUserOrRole
     ) -> None:
+        """Remove users or roles from the local blocklist."""
         if TYPE_CHECKING:
             assert ctx.guild is not None
         worked, users_or_roles = await _filter_bots(ctx, users_or_roles, "blacklist")
@@ -743,12 +765,14 @@ class AdvancedBlacklist(commands.Cog):
 
     @local_blocklist.command(name="list")
     async def local_blocklist_list(self, ctx: commands.Context) -> None:
+        """List all entries on the local blocklist."""
         if TYPE_CHECKING:
             assert ctx.guild is not None
         await self.send_list(ctx, white_black_list="blacklist", guild=ctx.guild)
 
     @local_blocklist.command(name="clear")
     async def local_blocklist_clear(self, ctx: commands.Context, confirm: bool = False):
+        """Clear all entries from the local blocklist."""
         if TYPE_CHECKING:
             assert ctx.guild is not None
         await self._handle_clearing(ctx, confirm, "blacklist", ctx.guild)
@@ -757,7 +781,7 @@ class AdvancedBlacklist(commands.Cog):
     @commands.guild_only()
     @commands.admin_or_permissions(administrator=True)
     async def local_allowlist(self, ctx: commands.Context) -> None:
-        r"""Manage the users/roles on the local allowlist"""
+        """Manage the users/roles on the local allowlist."""
         pass
 
     @local_allowlist.command(name="logchannel")
@@ -790,6 +814,7 @@ class AdvancedBlacklist(commands.Cog):
     async def local_allowlist_add(
         self, ctx: commands.Context, users_roles: GreedyUserOrRole, *, reason: Optional[str] = None
     ) -> None:
+        """Add users or roles to the local allowlist."""
         if TYPE_CHECKING:
             assert ctx.guild is not None
             assert isinstance(ctx.author, discord.Member)
@@ -823,6 +848,7 @@ class AdvancedBlacklist(commands.Cog):
     async def local_allowlist_remove(
         self, ctx: commands.Context, users_roles: GreedyUserOrRole
     ) -> None:
+        """Remove users or roles from the local allowlist."""
         if TYPE_CHECKING:
             assert ctx.guild is not None
             assert isinstance(ctx.author, discord.Member)
@@ -852,6 +878,7 @@ class AdvancedBlacklist(commands.Cog):
     async def local_allowlist_edit(
         self, ctx: commands.Context, user_or_role: UserOrRole, *, reason: str
     ) -> None:
+        """Edit the reason for an entry in the local allowlist."""
         if TYPE_CHECKING:
             assert ctx.guild is not None
         if isinstance(user_or_role, discord.Member) and user_or_role.bot:
@@ -868,12 +895,14 @@ class AdvancedBlacklist(commands.Cog):
 
     @local_allowlist.command(name="list")
     async def local_allowlist_list(self, ctx: commands.Context):
+        """List all entries on the local allowlist."""
         if TYPE_CHECKING:
             assert ctx.guild is not None
         await self.send_list(ctx, white_black_list="whitelist", guild=ctx.guild)
 
     @local_allowlist.command(name="clear")
     async def local_allowlist_clear(self, ctx: commands.Context, confirm: bool = False) -> None:
+        """Clear all entries from the local allowlist."""
         if TYPE_CHECKING:
             assert ctx.guild is not None
         await self._handle_clearing(ctx, confirm, "whitelist", ctx.guild)
@@ -885,6 +914,7 @@ class AdvancedBlacklist(commands.Cog):
         white_black_list: _WhiteBlacklist,
         guild: Optional[discord.Guild],
     ) -> None:
+        """Format and send the interactive list menu."""
         allow_deny = "allowlist" if white_black_list == "whitelist" else "blocklist"
         local = "local " if guild else ""
         list_format: Dict[str, str] = await self.config.format()
@@ -931,6 +961,7 @@ class AdvancedBlacklist(commands.Cog):
         await Menu.start(page, ctx)
 
     async def _handle_confirm(self, ctx: commands.Context, allow_deny: str) -> bool:
+        """Prompt the user for confirmation before clearing a list."""
         view = ConfirmView(ctx)
         msg = await ctx.send(f"Do you want to clear the {allow_deny}?", view=view)
         await view.wait()
@@ -946,6 +977,7 @@ class AdvancedBlacklist(commands.Cog):
     async def on_add_to_blacklist(
         self, users: UsersOrRoles, guild: Optional[discord.Guild], adv_bl: bool = False
     ) -> None:
+        """Listener for blocklist additions."""
         if adv_bl:
             return
 
@@ -958,6 +990,7 @@ class AdvancedBlacklist(commands.Cog):
     async def on_remove_from_blacklist(
         self, users: UsersOrRoles, guild: Optional[discord.Guild], adv_bl: bool = False
     ) -> None:
+        """Listener for blocklist removals."""
         if adv_bl:
             return
 
@@ -969,6 +1002,7 @@ class AdvancedBlacklist(commands.Cog):
     async def on_blacklist_clear(
         self, guild: Optional[discord.Guild], adv_bl: bool = False
     ) -> None:
+        """Listener for blocklist clears."""
         if adv_bl:
             return
         await self.clear_list(None, white_black_list="blacklist", guild=guild, override=True)
@@ -977,6 +1011,7 @@ class AdvancedBlacklist(commands.Cog):
     async def on_add_to_whitelist(
         self, users: UsersOrRoles, guild: Optional[discord.Guild], adv_bl: bool = False
     ) -> None:
+        """Listener for allowlist additions."""
         if adv_bl:
             return
 
@@ -989,6 +1024,7 @@ class AdvancedBlacklist(commands.Cog):
     async def on_remove_from_whitelist(
         self, users: UsersOrRoles, guild: Optional[discord.Guild], adv_bl: bool = False
     ) -> None:
+        """Listener for allowlist removals."""
         if adv_bl:
             return
 
@@ -1000,6 +1036,7 @@ class AdvancedBlacklist(commands.Cog):
     async def on_whitelist_clear(
         self, guild: Optional[discord.Guild], adv_bl: bool = False
     ) -> None:
+        """Listener for allowlist clears."""
         if adv_bl:
             return
 
@@ -1009,6 +1046,7 @@ class AdvancedBlacklist(commands.Cog):
     async def on_error_blacklist(
         self, user: Union[discord.User, discord.Member], command: commands.Command
     ) -> None:
+        """Listener for automatic blocklisting upon error thresholds."""
         reason = (
             f"Added {user.name} ({user.id}) to the blocklist as they used the command "
             f"`{command.qualified_name}` which errored too many times"
