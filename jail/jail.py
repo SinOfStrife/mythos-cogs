@@ -21,7 +21,7 @@ class Jail(commands.Cog):
     """A secure native timeout (jail) cog built using Discord Components V2 layout structures."""
 
     __author__: Final[List[str]] = ["SinOfStrife"]
-    __version__: Final[str] = "1.1.0"
+    __version__: Final[str] = "1.1.1"
 
     def __init__(self, bot: Red):
         self.bot = bot
@@ -255,39 +255,6 @@ class Jail(commands.Cog):
             trusted.append(member.id)
 
         await ctx.send(f"✅ Added {member.mention} to trusted jail staff.", ephemeral=True)
-
-    @jailstaff.command(name="remove")
-    async def jailstaff_remove(self, ctx: commands.Context, member: discord.Member):
-        """Remove a trusted staff member (Server Owner or Bot Owner only)."""
-        if ctx.author.id != ctx.guild.owner_id and not await self.bot.is_owner(ctx.author):
-            await ctx.send("❌ Only the server owner or bot owner can manage trusted jail staff.", ephemeral=True)
-            return
-
-        async with self.config.guild(ctx.guild).trusted_staff() as trusted:
-            if member.id not in trusted:
-                await ctx.send(f"❌ {member.mention} is not in trusted staff.", ephemeral=True)
-                return
-            trusted.remove(member.id)
-
-        await ctx.send(f"✅ Removed {member.mention} from trusted jail staff.", ephemeral=True)
-
-    @jailstaff.command(name="list")
-    async def jailstaff_list(self, ctx: commands.Context):
-        """List trusted jail staff members."""
-        if ctx.author.id != ctx.guild.owner_id and not await self.bot.is_owner(ctx.author):
-            is_trusted = await self.is_authorized_staff(ctx.author)
-            if not is_trusted:
-                await ctx.send("❌ You do not have permission to view the trusted staff list.", ephemeral=True)
-                return
-
-        trusted = await self.config.guild(ctx.guild).trusted_staff()
-        if not trusted:
-            await ctx.send("ℹ️ There are no trusted jail staff configured for this server.", ephemeral=True)
-            return
-
-        mentions = [f"<@{uid}>" for uid in trusted]
-        await ctx.send(f"📋 **Trusted Jail Staff:**\n" + ", ".join(mentions), ephemeral=True)
-                       )
 
     @jailstaff.command(name="remove")
     async def jailstaff_remove(self, ctx: commands.Context, member: discord.Member):
