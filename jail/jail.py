@@ -27,6 +27,8 @@ class Jail(commands.Cog):
         self.config.register_guild(trusted_staff=[])
 
     async def is_authorized_staff(self, member: discord.Member) -> bool:
+        if await self.bot.is_owner(member):
+            return True
         if member.id == member.guild.owner_id:
             return True
         trusted = await self.config.guild(member.guild).trusted_staff()
@@ -65,7 +67,7 @@ class Jail(commands.Cog):
 
         return delta
 
-    @commands.hybrid_command(name="jail", hidden=True)
+    @commands.hybrid_command(name="jail")
     async def jail(
         self,
         ctx: commands.Context,
@@ -81,8 +83,8 @@ class Jail(commands.Cog):
             return
 
         # 2. Check Target Immunity
-        if member.id == ctx.guild.owner_id:
-            await ctx.send("❌ You cannot jail the server owner.", ephemeral=True)
+        if member.id == ctx.guild.owner_id or await self.bot.is_owner(member):
+            await ctx.send("❌ You cannot jail the server owner or bot owner.", ephemeral=True)
             return
 
         trusted = await self.config.guild(ctx.guild).trusted_staff()
@@ -135,7 +137,7 @@ class Jail(commands.Cog):
         view = FButtonView()
         await ctx.send(content=channel_content, embed=embed, view=view)
 
-    @commands.hybrid_command(name="unjail", hidden=True)
+    @commands.hybrid_command(name="unjail")
     async def unjail(self, ctx: commands.Context, member: discord.Member):
         """Remove a native timeout from a member early."""
         if not ctx.guild.me.guild_permissions.moderate_members:
@@ -148,16 +150,16 @@ class Jail(commands.Cog):
         except discord.HTTPException as e:
             await ctx.send(f"❌ Failed to unjail member: {e}", ephemeral=True)
 
-    @commands.hybrid_group(name="jailstaff", hidden=True)
+    @commands.hybrid_group(name="jailstaff")
     async def jailstaff(self, ctx: commands.Context):
         """Manage trusted staff for the jail system."""
         pass
 
-    @jailstaff.command(name="add", hidden=True)
+    @jailstaff.command(name="add")
     async def jailstaff_add(self, ctx: commands.Context, member: discord.Member):
-        """Add a trusted staff member (Server Owner only)."""
-        if ctx.author.id != ctx.guild.owner_id:
-            await ctx.send("❌ Only the server owner can manage trusted jail staff.", ephemeral=True)
+        """Add a trusted staff member (Server Owner or Bot Owner only)."""
+        if ctx.author.id != ctx.guild.owner_id and not await self.bot.is_owner(ctx.author):
+            await ctx.send("❌ Only the server owner or bot owner can manage trusted jail staff.", ephemeral=True)
             return
 
         async with self.config.guild(ctx.guild).trusted_staff() as trusted:
@@ -168,11 +170,11 @@ class Jail(commands.Cog):
 
         await ctx.send(f"✅ Added {member.mention} to trusted jail staff.", ephemeral=True)
 
-    @jailstaff.command(name="remove", hidden=True)
+    @jailstaff.command(name="remove")
     async def jailstaff_remove(self, ctx: commands.Context, member: discord.Member):
-        """Remove a trusted staff member (Server Owner only)."""
-        if ctx.author.id != ctx.guild.owner_id:
-            await ctx.send("❌ Only the server owner can manage trusted jail staff.", ephemeral=True)
+        """Remove a trusted staff member (Server Owner or Bot Owner only)."""
+        if ctx.author.id != ctx.guild.owner_id and not await self.bot.is_owner(ctx.author):
+            await ctx.send("❌ Only the server owner or bot owner can manage trusted jail staff.", ephemeral=True)
             return
 
         async with self.config.guild(ctx.guild).trusted_staff() as trusted:
@@ -183,10 +185,10 @@ class Jail(commands.Cog):
 
         await ctx.send(f"✅ Removed {member.mention} from trusted jail staff.", ephemeral=True)
 
-    @jailstaff.command(name="list", hidden=True)
+    @jailstaff.command(name="list")
     async def jailstaff_list(self, ctx: commands.Context):
         """List trusted jail staff members."""
-        if ctx.author.id != ctx.guild.owner_id:
+        if ctx.author.id != ctx.guild.owner_id and not await self.bot.is_owner(ctx.author):
             is_trusted = await self.is_authorized_staff(ctx.author)
             if not is_trusted:
                 await ctx.send("❌ You do not have permission to view the trusted staff list.", ephemeral=True)
