@@ -1,30 +1,22 @@
 import asyncio
 import datetime
 import re
-from typing import Optional
+from typing import Optional, Dict, Set
 
 import discord
 from redbot.core import Config, commands
 from redbot.core.bot import Red
 
 
-class FButtonView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=900)  # Active for 15 minutes
-
-    @discord.ui.button(label="F in chat", style=discord.ButtonStyle.secondary, emoji="🇫")
-    async def f_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.channel.send("F")
-        await interaction.response.defer(ephemeral=True)
-
-
 class Jail(commands.Cog):
-    """A secure native timeout (jail) cog for Red-DiscordBot."""
+    """A secure native timeout (jail) cog using Discord Components V2."""
 
     def __init__(self, bot: Red):
         self.bot = bot
         self.config = Config.get_conf(self, identifier=987654321123, force_registration=True)
         self.config.register_guild(trusted_staff=[])
+        # Tracks clicked users per message ID: {message_id: set(user_ids)}
+        self.f_clicks: Dict[int, Set[int]] = {}
 
     async def is_authorized_staff(self, member: discord.Member) -> bool:
         if await self.bot.is_owner(member):
@@ -47,7 +39,7 @@ class Jail(commands.Cog):
         amount = int(amount_str)
 
         if not unit:
-            unit = "s"  # Default to seconds if no unit is provided
+            unit = "s"
 
         unit = unit.lower()
         if unit.startswith("s"):
@@ -61,11 +53,33 @@ class Jail(commands.Cog):
         else:
             return None
 
-        # Discord max timeout limit is 28 days
         if delta > datetime.timedelta(days=28):
             return None
 
         return delta
+
+    @commands.Cog.listener("on_interaction")
+    async def on_jail_interaction(self, interaction: discord.Interaction):
+        if interaction.type != discord.InteractionType.component:
+            return
+        
+        custom_id = interaction.data.get("custom_id", "")
+        if not custom_id.startswith("jail_f_btn_"):
+            return
+
+        message_id = interaction.message.id
+        user_id = interaction.user.id
+
+        if message_id not in self.f_clicks:
+            self.f_clicks[message_id] = set()
+
+        if user_id in self.f_clicks[message_id]:
+            await interaction.response.send_message("❌ You have already paid your respects!", ephemeral=True)
+            return
+
+        self.f_clicks[message_id].add(user_id)
+        await interaction.response.send_message("✅ You paid your respects.", ephemeral=True)
+        await interaction.channel.send(f"F in chat from {interaction.user.display_name}")
 
     @commands.hybrid_command(name="jail")
     async def jail(
@@ -76,13 +90,11 @@ class Jail(commands.Cog):
         *,
         reason: str,
     ):
-        """Timeout a member natively with custom duration and reason."""
-        # 1. Check Bot Permissions
+        """Timeout a member natively with Components V2 layout and custom duration."""
         if not ctx.guild.me.guild_permissions.moderate_members:
             await ctx.send("❌ I do not have the **Moderate Members** permission.", ephemeral=True)
             return
 
-        # 2. Check Target Immunity (Server Owner only; Bot Owner immunity removed)
         if member.id == ctx.guild.owner_id:
             await ctx.send("❌ You cannot jail the server owner.", ephemeral=True)
             return
@@ -92,17 +104,15 @@ class Jail(commands.Cog):
             await ctx.send("❌ You cannot jail a trusted staff member.", ephemeral=True)
             return
 
-        # 3. Parse Duration
         delta = self.parse_duration(duration)
         if not delta:
             await ctx.send(
                 "❌ Invalid duration format or exceeds the 28-day maximum limit. "
-                "Examples: `20s`, `15m`, `2h`, `1d`, `20 seconds`, `1 minute`.",
+                "Examples: `20s`, `15m`, `2h`, `1d`.",
                 ephemeral=True,
             )
             return
 
-        # 4. Apply Native Timeout
         unlock_time = discord.utils.utcnow() + delta
         try:
             await member.timeout(unlock_time, reason=reason)
@@ -110,22 +120,66 @@ class Jail(commands.Cog):
             await ctx.send(f"❌ Failed to apply timeout: {e}", ephemeral=True)
             return
 
-        # 5. Build Notice Embed
-        embed = discord.Embed(
-            title="🚨 JAILED !!!",
-            description=(
-                "────────────────────────────────────────\n"
-                f"**User:** {member.mention} (`{member.id}`)\n"
-                f"**Duration:** {duration}\n"
-                f"**Reason:** {reason}"
-            ),
-            color=discord.Color.red(),
-        )
+        # Components V2 Payload Structure
+        payload = {
+            "flags": 32768,  # IS_COMPONENTS_V2 flag
+            "components": [
+                {
+                    "type": 17,  # Container Component
+                    "accent_color": 16711680,  # Red accent color
+                    "components": [
+                        {
+                            "type": 10,  # TextDisplay Component
+                            "content": (
+                                "### 🚨 JAILED !!!\n"
+                                "────────────────────────────────────────\n"
+                                f"**User:** {member.mention} (`{member.id}`)\n"
+                                f"**Duration:** {duration}\n"
+                                f"**Reason:** {reason}"
+                            )
+                        },
+                        {
+                            "type": 1,  # ActionRow Component
+                            "components": [
+                                {
+                                    "type": 2,  # Button Component
+                                    "style": 2,  # Secondary style
+                                    "label": "F in chat",
+                                    "emoji": {"name": "🇫"},
+                                    "custom_id": f"jail_f_btn_{member.id}_{discord.utils.utcnow().timestamp()}"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
 
-        # 6. Send to DMs & Channel Simultaneously
+        # Send DM notice using V2 payload
         dm_success = True
+        dm_payload = {
+            "flags": 32768,
+            "components": [
+                {
+                    "type": 17,
+                    "accent_color": 16711680,
+                    "components": [
+                        {
+                            "type": 10,
+                            "content": (
+                                "### 🚨 YOU HAVE BEEN JAILED!\n"
+                                "────────────────────────────────────────\n"
+                                f"**Server:** {ctx.guild.name}\n"
+                                f"**Duration:** {duration}\n"
+                                f"**Reason:** {reason}"
+                            )
+                        }
+                    ]
+                }
+            ]
+        }
         try:
-            await member.send(embed=embed)
+            await member.send(**dm_payload)
         except discord.Forbidden:
             dm_success = False
 
@@ -134,8 +188,9 @@ class Jail(commands.Cog):
             if not dm_success
             else None
         )
-        view = FButtonView()
-        await ctx.send(content=channel_content, embed=embed, view=view)
+
+        # Send the V2 container payload to the channel
+        await ctx.send(content=channel_content, **payload)
 
     @commands.hybrid_command(name="unjail")
     async def unjail(self, ctx: commands.Context, member: discord.Member):
