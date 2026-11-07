@@ -8,6 +8,7 @@ import discord
 from discord.http import Route
 from redbot.core import Config, commands
 from redbot.core.bot import Red
+from redbot.core.utils.chat_formatting import humanize_list, humanize_number, humanize_timedelta
 
 log = logging.getLogger("red.jail")
 
@@ -20,7 +21,7 @@ class Jail(commands.Cog):
     """A secure native timeout (jail) cog built using Discord Components V2 layout structures."""
 
     __author__: Final[List[str]] = ["SinOfStrife"]
-    __version__: Final[str] = "1.0.0"
+    __version__: Final[str] = "1.1.0"
 
     def __init__(self, bot: Red):
         self.bot = bot
@@ -80,12 +81,11 @@ class Jail(commands.Cog):
         route = Route("POST", "/channels/{channel_id}/messages", channel_id=channel_id)
         res = await self.bot.http.request(route, json=payload)
         if isinstance(res, dict) and "id" in res:
-            # Reconstruct minimal message object or return data if needed
             return discord.Message(state=self.bot._connection, data=res, channel=self.bot.get_channel(channel_id))
         return None
 
-    def _build_jail_payload(self, member: discord.Member, duration: str, reason: str, is_dm: bool = False) -> Dict[str, Any]:
-        """Construct the Components V2 JSON payload for jail notices."""
+    def _build_jail_payload(self, member: discord.Member, duration_str: str, reason: str, is_dm: bool = False) -> Dict[str, Any]:
+        """Construct the Components V2 JSON payload for jail notices with a clean humanized duration."""
         title = "🚨 YOU HAVE BEEN JAILED!" if is_dm else "🚨 JAILED !!!"
         sub_text = f"**Server:** {member.guild.name}\n" if is_dm else f"**User:** {member.mention} (`{member.id}`)\n"
 
@@ -96,13 +96,13 @@ class Jail(commands.Cog):
                     f"### {title}\n"
                     "────────────────────────────────────────\n"
                     f"{sub_text}"
-                    f"**Duration:** {duration}\n"
+                    f"**Duration:** {duration_str}\n"
                     f"**Reason:** {reason}"
                 )
             }
         ]
 
-        # Only add the "F in chat" button on public channel notices, not DMs
+        # Only add the interactive button to channel messages, not DMs
         if not is_dm:
             container_components.append({
                 "type": 14,
@@ -124,7 +124,7 @@ class Jail(commands.Cog):
 
         container_component = {
             "type": 17,
-            "accent_color": 16711680,  # Red color
+            "accent_color": 16711680,  # Red accent color
             "spoiler": False,
             "components": container_components,
         }
@@ -192,6 +192,9 @@ class Jail(commands.Cog):
             )
             return
 
+        # Convert delta into a clean humanized time string (e.g. "1 hour", "30 seconds")
+        human_duration = humanize_timedelta(timedelta=delta) or duration
+
         unlock_time = discord.utils.utcnow() + delta
         try:
             await member.timeout(unlock_time, reason=reason)
@@ -199,9 +202,9 @@ class Jail(commands.Cog):
             await ctx.send(f"❌ Failed to apply timeout: {e}", ephemeral=True)
             return
 
-        # Build payloads
-        dm_payload = self._build_jail_payload(member, duration, reason, is_dm=True)
-        channel_payload = self._build_jail_payload(member, duration, reason, is_dm=False)
+        # Build payloads using the humanized time representation
+        dm_payload = self._build_jail_payload(member, human_duration, reason, is_dm=True)
+        channel_payload = self._build_jail_payload(member, human_duration, reason, is_dm=False)
 
         # Send DM notice
         dm_success = True
@@ -217,7 +220,6 @@ class Jail(commands.Cog):
         # Send to channel via REST V2 route
         await self._send_raw_v2_payload(ctx.channel.id, channel_payload)
         
-        # Acknowledge hybrid command execution silently if triggered via slash/prefix
         if ctx.interaction:
             await ctx.interaction.response.send_message("✅ Member successfully jailed.", ephemeral=True)
 
@@ -253,6 +255,39 @@ class Jail(commands.Cog):
             trusted.append(member.id)
 
         await ctx.send(f"✅ Added {member.mention} to trusted jail staff.", ephemeral=True)
+
+    @jailstaff.command(name="remove")
+    async def jailstaff_remove(self, ctx: commands.Context, member: discord.Member):
+        """Remove a trusted staff member (Server Owner or Bot Owner only)."""
+        if ctx.author.id != ctx.guild.owner_id and not await self.bot.is_owner(ctx.author):
+            await ctx.send("❌ Only the server owner or bot owner can manage trusted jail staff.", ephemeral=True)
+            return
+
+        async with self.config.guild(ctx.guild).trusted_staff() as trusted:
+            if member.id not in trusted:
+                await ctx.send(f"❌ {member.mention} is not in trusted staff.", ephemeral=True)
+                return
+            trusted.remove(member.id)
+
+        await ctx.send(f"✅ Removed {member.mention} from trusted jail staff.", ephemeral=True)
+
+    @jailstaff.command(name="list")
+    async def jailstaff_list(self, ctx: commands.Context):
+        """List trusted jail staff members."""
+        if ctx.author.id != ctx.guild.owner_id and not await self.bot.is_owner(ctx.author):
+            is_trusted = await self.is_authorized_staff(ctx.author)
+            if not is_trusted:
+                await ctx.send("❌ You do not have permission to view the trusted staff list.", ephemeral=True)
+                return
+
+        trusted = await self.config.guild(ctx.guild).trusted_staff()
+        if not trusted:
+            await ctx.send("ℹ️ There are no trusted jail staff configured for this server.", ephemeral=True)
+            return
+
+        mentions = [f"<@{uid}>" for uid in trusted]
+        await ctx.send(f"📋 **Trusted Jail Staff:**\n" + ", ".join(mentions), ephemeral=True)
+                       )
 
     @jailstaff.command(name="remove")
     async def jailstaff_remove(self, ctx: commands.Context, member: discord.Member):
