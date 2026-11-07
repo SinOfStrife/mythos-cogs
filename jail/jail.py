@@ -82,9 +82,9 @@ class Jail(commands.Cog):
             await ctx.send("❌ I do not have the **Moderate Members** permission.", ephemeral=True)
             return
 
-        # 2. Check Target Immunity
-        if member.id == ctx.guild.owner_id or await self.bot.is_owner(member):
-            await ctx.send("❌ You cannot jail the server owner or bot owner.", ephemeral=True)
+        # 2. Check Target Immunity (Server Owner only; Bot Owner immunity removed)
+        if member.id == ctx.guild.owner_id:
+            await ctx.send("❌ You cannot jail the server owner.", ephemeral=True)
             return
 
         trusted = await self.config.guild(ctx.guild).trusted_staff()
