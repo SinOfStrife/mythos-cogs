@@ -1,0 +1,9 @@
+{
+  "author": ["SinOfStrife"],
+  "install_msg": "Thanks for installing the Jail cog! Use [p]jail to natively timeout users.",
+  "name": "Jail",
+  "short": "Secure native timeout cog with custom durations, role exemptions, and interactive features.",
+  "description": "Allows server owners and trusted staff to natively timeout users with flexible short/long hand durations, dual DM/channel notices, and interactive button support.",
+  "tags": ["moderation", "timeout", "jail"],
+  "min_bot_version": "3.5.0"
+}
