@@ -1,14 +1,16 @@
+# Copyright (c) 2026 SinOfStrife and Contributors
+# Licensed under MIT
+
 from __future__ import annotations
 
 from datetime import datetime
 import logging
-from typing import Literal
+from typing import Any, Literal, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import discord
-from discord import app_commands
 from discord.http import Route
-from redbot.core import commands
+from redbot.core import app_commands, commands
 from redbot.core.bot import Red
 
 log = logging.getLogger("red.strifecogs.epoch")
@@ -34,10 +36,18 @@ TIMEZONE_ALIASES = {
 }
 
 
+def _apply_app_contexts(func_or_cmd: Any) -> Any:
+    """Dynamically applies User App contexts if supported by the running discord.py version."""
+    if hasattr(app_commands, "allowed_installs") and hasattr(app_commands, "allowed_contexts"):
+        func_or_cmd = app_commands.allowed_installs(guilds=True, users=True)(func_or_cmd)
+        func_or_cmd = app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)(func_or_cmd)
+    return func_or_cmd
+
+
 class Epoch(commands.Cog):
     """Dynamic streaming timestamp generator with Components V2 layout, user-app support, and full timezone/DST handling."""
 
-    __version__ = "1.1.0"
+    __version__ = "1.1.1"
     __author__ = ["SinOfStrife"]
     __red_end_user_data_statement__ = "This cog does not persistently store any personal or user data."
 
@@ -58,7 +68,7 @@ class Epoch(commands.Cog):
     def parse_flexible_datetime(self, time_str: str) -> datetime:
         """Robust multi-format parser supporting 24-hour, AM/PM, hyphens, and slashes with DST/IANA awareness."""
         clean_str = time_str.strip()
-        
+
         formats_to_try = [
             "%Y-%m-%d %H:%M", "%Y/%m/%d %H:%M",
             "%d-%m-%Y %H:%M", "%d/%m/%Y %H:%M",
@@ -73,7 +83,7 @@ class Epoch(commands.Cog):
                 return datetime.strptime(clean_str, fmt)
             except ValueError:
                 continue
-                
+
         raise ValueError("Unrecognized date/time format.")
 
     async def _send_v2_response(
@@ -82,7 +92,7 @@ class Epoch(commands.Cog):
         """Sends or updates an interaction response with a Components V2 payload via REST."""
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=ephemeral)
-            
+
         app_id = interaction.application_id or self.bot.application_id
         route = Route(
             "PATCH",
@@ -92,7 +102,7 @@ class Epoch(commands.Cog):
         )
         data = dict(payload)
         if ephemeral:
-            data["flags"] = data.get("flags", 0) | 64
+            data["flags"] = data.get("flags", 32768) | 64
         await self.bot.http.request(route, json=data)
 
     def _build_timestamp_payload(self, epoch_time: int, time_str: str, timezone_input: str, resolved_zone: str) -> dict:
@@ -126,7 +136,7 @@ class Epoch(commands.Cog):
             {"type": 1, "components": row_0_buttons},
             {"type": 1, "components": row_1_buttons},
             {"type": 14, "divider": True, "spacing": 1},
-            {"type": 10, "content": "-# Click any button above to instantly copy that timestamp format!"}
+            {"type": 10, "content": "-# Click any button above to instantly copy that timestamp format!"},
         ]
 
         container_component = {
@@ -138,7 +148,7 @@ class Epoch(commands.Cog):
 
         return {
             "components": [container_component],
-            "flags": 64,
+            "flags": 32832,  # 32768 (IS_COMPONENTS_V2) | 64 (EPHEMERAL)
         }
 
     @commands.Cog.listener()
@@ -146,26 +156,33 @@ class Epoch(commands.Cog):
         """Handles Component V2 button clicks for timestamp copy actions."""
         if interaction.type != discord.InteractionType.component:
             return
-        
-        custom_id = interaction.data.get("custom_id", "")
+
+        custom_id = (interaction.data or {}).get("custom_id", "")
         if not custom_id.startswith("ts_"):
             return
 
+        parts = custom_id.split("_", 2)
+        if len(parts) != 3:
+            return
+
         try:
-            _, epoch_str, format_style = custom_id.split("_", 2)
+            _, epoch_str, format_style = parts
             timestamp_code = f"<t:{epoch_str}:{format_style}>"
             await interaction.response.send_message(f"`{timestamp_code}`", ephemeral=True)
         except Exception as e:
             if not interaction.response.is_done():
                 await interaction.response.send_message(f"❌ Error generating code block: `{e}`", ephemeral=True)
 
-    @app_commands.command(name="timestamp", description="Convert schedule times into interactive Discord timestamps using Components V2.")
-    @app_commands.allowed_installs(guilds=True, users=True)
-    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+    @app_commands.command(
+        name="timestamp",
+        description="Convert schedule times into interactive Discord timestamps using Components V2.",
+        extras={"red_force_enable": True},
+    )
+    @_apply_app_contexts
     @app_commands.describe(
         timezone="Timezone shortcut or IANA name (e.g., JST, EST, AEST)",
         time_str="Date and time (e.g., 20/11/2026 7:30 PM, or 2026-11-20 19:30)",
-        style="Optional: Choose a specific format to get it instantly without buttons."
+        style="Optional: Choose a specific format to get it instantly without buttons.",
     )
     @app_commands.choices(style=[
         app_commands.Choice(name="Long Date/Time (:F) [Recommended]", value="F"),
@@ -176,7 +193,13 @@ class Epoch(commands.Cog):
         app_commands.Choice(name="Short Date (:d)", value="d"),
         app_commands.Choice(name="Long Time (:T)", value="T"),
     ])
-    async def timestamp(self, interaction: discord.Interaction, timezone: str, time_str: str, style: str = None):
+    async def timestamp(
+        self,
+        interaction: discord.Interaction,
+        timezone: str,
+        time_str: str,
+        style: Optional[str] = None,
+    ) -> None:
         cleaned_tz_input = timezone.strip().lower()
         resolved_tz_name = TIMEZONE_ALIASES.get(cleaned_tz_input, timezone.strip())
 
@@ -196,12 +219,12 @@ class Epoch(commands.Cog):
         except ValueError:
             await interaction.response.send_message(
                 "❌ **Format Error:** Please use a valid layout like `DD/MM/YYYY HH:MM` or `DD/MM/YYYY I:M PM` (e.g., `20/11/2026 7:30 PM`).",
-                ephemeral=True
+                ephemeral=True,
             )
         except ZoneInfoNotFoundError:
             await interaction.response.send_message(
                 f"❌ **Timezone Error:** Unknown zone `{timezone}`. Try standard shortcuts like `JST`, `EST`, `AEST`.",
-                ephemeral=True
+                ephemeral=True,
             )
         except Exception as e:
             if not interaction.response.is_done():
