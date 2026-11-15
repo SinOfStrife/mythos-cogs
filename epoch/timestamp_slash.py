@@ -1,9 +1,17 @@
+from __future__ import annotations
+
 from datetime import datetime
+import logging
+from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
 import discord
+from discord import app_commands
 from discord.http import Route
 from redbot.core import commands
-from discord import app_commands
+from redbot.core.bot import Red
+
+log = logging.getLogger("red.strifecogs.epoch")
 
 TIMEZONE_ALIASES = {
     "jst": "Asia/Tokyo",
@@ -25,14 +33,30 @@ TIMEZONE_ALIASES = {
     "melbourne": "Australia/Melbourne",
 }
 
-class Epoch(commands.Cog):
-    """A tool for generating Discord timestamps using Components V2 layout structures."""
 
-    def __init__(self, bot):
+class Epoch(commands.Cog):
+    """Dynamic streaming timestamp generator with Components V2 layout, user-app support, and full timezone/DST handling."""
+
+    __version__ = "1.1.0"
+    __author__ = ["SinOfStrife"]
+    __red_end_user_data_statement__ = "This cog does not persistently store any personal or user data."
+
+    def __init__(self, bot: Red):
         self.bot = bot
 
+    async def red_get_data_for_user(self, *, user_id: int) -> dict:
+        return {}
+
+    async def red_delete_data_for_user(
+        self,
+        *,
+        requester: Literal["discord_deleted_user", "owner", "user", "user_strict"],
+        user_id: int,
+    ) -> None:
+        return
+
     def parse_flexible_datetime(self, time_str: str) -> datetime:
-        """Robust multi-format parser supporting 24-hour, AM/PM, hyphens, and slashes."""
+        """Robust multi-format parser supporting 24-hour, AM/PM, hyphens, and slashes with DST/IANA awareness."""
         clean_str = time_str.strip()
         
         formats_to_try = [
@@ -85,14 +109,12 @@ class Epoch(commands.Cog):
             f"• **Countdown Preview:** {rel_preview}"
         )
 
-        # Row 0: Primary formats with clean human-readable names
         row_0_buttons = [
             {"type": 2, "style": 2, "label": "Long Date & Time", "custom_id": f"ts_{epoch_time}_F"},
             {"type": 2, "style": 3, "label": "Countdown", "custom_id": f"ts_{epoch_time}_R"},
             {"type": 2, "style": 2, "label": "Short Date & Time", "custom_id": f"ts_{epoch_time}_f"},
         ]
 
-        # Row 1: Additional formats with clean text labels
         row_1_buttons = [
             {"type": 2, "style": 2, "label": "Long Date", "custom_id": f"ts_{epoch_time}_D"},
             {"type": 2, "style": 2, "label": "Short Date", "custom_id": f"ts_{epoch_time}_d"},
@@ -111,14 +133,14 @@ class Epoch(commands.Cog):
 
         container_component = {
             "type": 17,
-            "accent_color": 5793266,  # Blurple accent matching v2 design
+            "accent_color": 5793266,
             "spoiler": False,
             "components": container_components,
         }
 
         return {
             "components": [container_component],
-            "flags": 64,  # Fully ephemeral response
+            "flags": 64,
         }
 
     @commands.Cog.listener()
@@ -134,8 +156,6 @@ class Epoch(commands.Cog):
         try:
             _, epoch_str, format_style = custom_id.split("_", 2)
             timestamp_code = f"<t:{epoch_str}:{format_style}>"
-            
-            # Send the copyable code snippet privately to the user
             await interaction.response.send_message(f"`{timestamp_code}`", ephemeral=True)
         except Exception as e:
             if not interaction.response.is_done():
@@ -188,4 +208,3 @@ class Epoch(commands.Cog):
         except Exception as e:
             if not interaction.response.is_done():
                 await interaction.response.send_message(f"❌ An unexpected error occurred: `{str(e)}`", ephemeral=True)
-      
