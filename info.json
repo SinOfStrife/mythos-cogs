@@ -1,0 +1,14 @@
+{
+    "epoch": {
+        "short": "Dynamic streaming timestamp generator with Components V2 layout.",
+        "hidden": false
+    },
+    "linkquoter": {
+        "short": "Quotes Discord message links with rich previews.",
+        "hidden": false
+    },
+    "servermanager": {
+        "short": "Owner-only interactive server management suite.",
+        "hidden": false
+    }
+}
