@@ -37,7 +37,6 @@ TIMEZONE_ALIASES = {
 
 
 def _apply_app_contexts(func_or_cmd: Any) -> Any:
-    """Dynamically applies User App contexts if supported by the running discord.py version."""
     if hasattr(app_commands, "allowed_installs") and hasattr(app_commands, "allowed_contexts"):
         func_or_cmd = app_commands.allowed_installs(guilds=True, users=True)(func_or_cmd)
         func_or_cmd = app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)(func_or_cmd)
@@ -47,7 +46,7 @@ def _apply_app_contexts(func_or_cmd: Any) -> Any:
 class Epoch(commands.Cog):
     """Dynamic streaming timestamp generator with Components V2 layout, user-app support, and full timezone/DST handling."""
 
-    __version__ = "1.1.1"
+    __version__ = "1.1.2"
     __author__ = ["SinOfStrife"]
     __red_end_user_data_statement__ = "This cog does not persistently store any personal or user data."
 
@@ -66,7 +65,6 @@ class Epoch(commands.Cog):
         return
 
     def parse_flexible_datetime(self, time_str: str) -> datetime:
-        """Robust multi-format parser supporting 24-hour, AM/PM, hyphens, and slashes with DST/IANA awareness."""
         clean_str = time_str.strip()
 
         formats_to_try = [
@@ -89,11 +87,7 @@ class Epoch(commands.Cog):
     async def _send_v2_response(
         self, interaction: discord.Interaction, payload: dict, ephemeral: bool = True
     ) -> None:
-        """Sends or updates an interaction response with a Components V2 payload via REST."""
-        if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=ephemeral)
-
-        app_id = interaction.application_id or self.bot.application_id
+        app_id = interaction.application_id or getattr(self.bot, "application_id", None) or self.bot.user.id
         route = Route(
             "PATCH",
             "/webhooks/{application_id}/{interaction_token}/messages/@original",
@@ -106,7 +100,6 @@ class Epoch(commands.Cog):
         await self.bot.http.request(route, json=data)
 
     def _build_timestamp_payload(self, epoch_time: int, time_str: str, timezone_input: str, resolved_zone: str) -> dict:
-        """Builds a Components V2 container payload matching advanced invite layout structures."""
         long_preview = f"<t:{epoch_time}:F>"
         rel_preview = f"<t:{epoch_time}:R>"
 
@@ -148,12 +141,11 @@ class Epoch(commands.Cog):
 
         return {
             "components": [container_component],
-            "flags": 32832,  # 32768 (IS_COMPONENTS_V2) | 64 (EPHEMERAL)
+            "flags": 32832,
         }
 
     @commands.Cog.listener()
     async def on_interaction(self, interaction: discord.Interaction) -> None:
-        """Handles Component V2 button clicks for timestamp copy actions."""
         if interaction.type != discord.InteractionType.component:
             return
 
@@ -172,6 +164,8 @@ class Epoch(commands.Cog):
         except Exception as e:
             if not interaction.response.is_done():
                 await interaction.response.send_message(f"❌ Error generating code block: `{e}`", ephemeral=True)
+            else:
+                await interaction.followup.send(f"❌ Error generating code block: `{e}`", ephemeral=True)
 
     @app_commands.command(
         name="timestamp",
@@ -200,6 +194,9 @@ class Epoch(commands.Cog):
         time_str: str,
         style: Optional[str] = None,
     ) -> None:
+        # Defer immediately on line 1 to defeat Discord's 3-second timeout window
+        await interaction.response.defer(ephemeral=True)
+
         cleaned_tz_input = timezone.strip().lower()
         resolved_tz_name = TIMEZONE_ALIASES.get(cleaned_tz_input, timezone.strip())
 
@@ -210,22 +207,21 @@ class Epoch(commands.Cog):
             epoch_time = int(dt_source.timestamp())
 
             if style:
-                await interaction.response.send_message(f"<t:{epoch_time}:{style}>", ephemeral=True)
+                await interaction.followup.send(f"<t:{epoch_time}:{style}>", ephemeral=True)
                 return
 
             payload = self._build_timestamp_payload(epoch_time, time_str, timezone, resolved_tz_name)
             await self._send_v2_response(interaction, payload, ephemeral=True)
 
         except ValueError:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "❌ **Format Error:** Please use a valid layout like `DD/MM/YYYY HH:MM` or `DD/MM/YYYY I:M PM` (e.g., `20/11/2026 7:30 PM`).",
                 ephemeral=True,
             )
         except ZoneInfoNotFoundError:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f"❌ **Timezone Error:** Unknown zone `{timezone}`. Try standard shortcuts like `JST`, `EST`, `AEST`.",
                 ephemeral=True,
             )
         except Exception as e:
-            if not interaction.response.is_done():
-                await interaction.response.send_message(f"❌ An unexpected error occurred: `{str(e)}`", ephemeral=True)
+            await interaction.followup.send(f"❌ An unexpected error occurred: `{str(e)}`", ephemeral=True)
