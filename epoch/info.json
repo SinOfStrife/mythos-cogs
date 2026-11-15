@@ -2,9 +2,9 @@
     "author": ["SinOfStrife"],
     "install_msg": "Epoch timezone converter cog installed successfully. Use the /timestamp slash command anywhere.",
     "name": "epoch",
-    "short": "Dynamic streaming timestamp generator with Components V2 layout, all 7 formats, and user-app support.",
-    "description": "Converts arbitrary timezones and shortcuts (JST, EST, AEST) into all 7 interactive Discord timestamps using modern Components V2 layouts.",
-    "tags": ["time", "timezone", "streaming", "timestamps", "dst"],
+    "short": "Dynamic streaming timestamp generator with Components V2 layout, user-app support, and DST awareness.",
+    "description": "Converts arbitrary timezones, daylight saving zones, and shortcuts into all 7 interactive Discord timestamps using modern Components V2 layouts and user-installable app context support.",
+    "tags": ["time", "timezone", "streaming", "timestamps", "dst", "user-apps"],
     "min_bot_version": "3.5.0",
     "hidden": false,
     "type": "standard"
