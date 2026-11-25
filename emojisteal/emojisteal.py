@@ -95,19 +95,24 @@ class ServerUploadSelect(discord.ui.Select):
             )
             return
 
-        if not guild.me.guild_permissions.manage_emojis:
+        if not self.cog._bot_can_upload(guild):
             await interaction.response.send_message(
                 f"❌ I need the **Manage Expressions** permission in **{guild.name}** to do that.",
                 ephemeral=True,
             )
             return
 
-        member = guild.get_member(interaction.user.id)
-        has_perm = (
-            member.guild_permissions.manage_emojis
-            if member is not None
-            else guild.owner_id == interaction.user.id
-        )
+        if guild.owner_id == interaction.user.id:
+            has_perm = True
+        else:
+            member = guild.get_member(interaction.user.id)
+            has_perm = bool(
+                member
+                and (
+                    member.guild_permissions.manage_emojis
+                    or getattr(member.guild_permissions, "create_expressions", False)
+                )
+            )
         if not has_perm:
             await interaction.response.send_message(
                 f"❌ You need the **Manage Expressions** permission in **{guild.name}** to do that.",
@@ -205,6 +210,14 @@ class EmojiSteal(commands.Cog):
 
     async def red_delete_data_for_user(self, *, requester: str, user_id: int) -> None:
         return
+
+    @staticmethod
+    def _bot_can_upload(guild: discord.Guild) -> bool:
+        me = guild.me
+        if me is None:
+            return False
+        perms = me.guild_permissions
+        return perms.manage_emojis or getattr(perms, "create_expressions", False)
 
     @staticmethod
     def format_permissions(perms: Sequence[str]) -> str:
@@ -336,19 +349,27 @@ class EmojiSteal(commands.Cog):
         ext = "gif" if sticker.format == discord.StickerFormatType.gif else "png"
         return f"sticker.{ext}"
 
-    def get_manageable_guilds(self, user_id: int) -> List[discord.Guild]:
+    def get_manageable_guilds(
+        self, user_id: int, current_guild_id: Optional[int] = None
+    ) -> List[discord.Guild]:
         guilds: List[discord.Guild] = []
         for guild in self.bot.guilds:
-            if guild.unavailable or not guild.me.guild_permissions.manage_emojis:
+            if guild.unavailable or not self._bot_can_upload(guild):
                 continue
-            member = guild.get_member(user_id)
-            has_perm = (
-                member.guild_permissions.manage_emojis
-                if member is not None
-                else guild.owner_id == user_id
-            )
+            if guild.owner_id == user_id:
+                has_perm = True
+            else:
+                member = guild.get_member(user_id)
+                has_perm = bool(
+                    member
+                    and (
+                        member.guild_permissions.manage_emojis
+                        or getattr(member.guild_permissions, "create_expressions", False)
+                    )
+                )
             if has_perm:
                 guilds.append(guild)
+        guilds.sort(key=lambda g: (g.id != current_guild_id, g.name.lower()))
         return guilds[:25]
 
     @staticmethod
@@ -368,7 +389,7 @@ class EmojiSteal(commands.Cog):
         guild: discord.Guild,
         items: Sequence[Union[discord.StickerItem, discord.PartialEmoji]],
     ) -> str:
-        if not guild.me.guild_permissions.manage_emojis:
+        if not self._bot_can_upload(guild):
             return "❌ I need the **Manage Expressions** permission in that server."
 
         if isinstance(items[0], discord.StickerItem):
@@ -489,10 +510,11 @@ class EmojiSteal(commands.Cog):
         pages = list(pagify(response))
 
         view: Optional[discord.ui.View] = None
-        if interaction.guild is None:
-            manageable_guilds = self.get_manageable_guilds(interaction.user.id)
-            if manageable_guilds:
-                view = ServerUploadView(self, manageable_guilds, emojis, interaction.user.id)
+        manageable_guilds = self.get_manageable_guilds(
+            interaction.user.id, interaction.guild_id
+        )
+        if manageable_guilds:
+            view = ServerUploadView(self, manageable_guilds, emojis, interaction.user.id)
 
         if view is not None:
             await interaction.response.send_message(content=pages[0], ephemeral=True, view=view)
