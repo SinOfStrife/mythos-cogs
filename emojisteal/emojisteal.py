@@ -4,18 +4,13 @@ import logging
 import re
 import zipfile
 from itertools import zip_longest
-from typing import List, Optional, Sequence, Union
+from typing import Any, Dict, List, Optional, Sequence, Union
 
 import aiohttp
 import discord
 from redbot.core import app_commands, commands
 from redbot.core.bot import Red
 from redbot.core.utils.chat_formatting import pagify
-
-try:
-    from redbot.core.app_commands import AppCommandContext, AppInstallationType
-except ImportError:
-    from discord.app_commands import AppCommandContext, AppInstallationType
 
 log = logging.getLogger("red.emojisteal")
 
@@ -153,41 +148,60 @@ class EmojiSteal(commands.Cog):
     def __init__(self, bot: Red) -> None:
         super().__init__()
         self.bot = bot
-        self.steal_context_menu = app_commands.ContextMenu(
-            name="Steal Emotes",
-            callback=self.steal_app_command,
-            allowed_contexts=AppCommandContext(
+
+        base_kwargs: Dict[str, Any] = {"extras": {"red_force_enable": True}}
+        install_cls = getattr(
+            app_commands,
+            "AppInstallationType",
+            getattr(discord.app_commands, "AppInstallationType", None),
+        )
+        context_cls = getattr(
+            app_commands,
+            "AppCommandContext",
+            getattr(discord.app_commands, "AppCommandContext", None),
+        )
+
+        steal_kwargs: Dict[str, Any] = dict(base_kwargs)
+        upload_kwargs: Dict[str, Any] = dict(base_kwargs)
+        if context_cls is not None:
+            steal_kwargs["allowed_contexts"] = context_cls(
                 guild=True,
                 dm_channel=True,
                 private_channel=True,
-            ),
-            allowed_installs=AppInstallationType(
-                guild=True,
-                user=True,
-            ),
+            )
+            upload_kwargs["allowed_contexts"] = context_cls(guild=True)
+        if install_cls is not None:
+            steal_kwargs["allowed_installs"] = install_cls(guild=True, user=True)
+            upload_kwargs["allowed_installs"] = install_cls(guild=True)
+
+        self.steal_context_menu = app_commands.ContextMenu(
+            name="Steal Emotes",
+            callback=self.steal_app_command,
+            **steal_kwargs,
         )
         self.steal_upload_context_menu = app_commands.ContextMenu(
             name="Steal+Upload Emotes",
             callback=self.steal_upload_app_command,
-            allowed_contexts=AppCommandContext(guild=True),
-            allowed_installs=AppInstallationType(guild=True),
+            **upload_kwargs,
         )
         self.steal_context_menu.error(self.on_context_menu_error)
         self.steal_upload_context_menu.error(self.on_context_menu_error)
 
     async def cog_load(self) -> None:
-        self.bot.tree.add_command(self.steal_context_menu)
-        self.bot.tree.add_command(self.steal_upload_context_menu)
+        self._drop_menus()
+        self.bot.tree.add_command(self.steal_context_menu, override=True)
+        self.bot.tree.add_command(self.steal_upload_context_menu, override=True)
 
     async def cog_unload(self) -> None:
-        self.bot.tree.remove_command(
-            self.steal_context_menu.name,
-            type=self.steal_context_menu.type,
-        )
-        self.bot.tree.remove_command(
-            self.steal_upload_context_menu.name,
-            type=self.steal_upload_context_menu.type,
-        )
+        self._drop_menus()
+
+    def _drop_menus(self) -> None:
+        for menu in (self.steal_context_menu, self.steal_upload_context_menu):
+            try:
+                if self.bot.tree.get_command(menu.name, type=menu.type) is not None:
+                    self.bot.tree.remove_command(menu.name, type=menu.type)
+            except Exception:
+                pass
 
     async def red_delete_data_for_user(self, *, requester: str, user_id: int) -> None:
         return
