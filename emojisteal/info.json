@@ -1,0 +1,13 @@
+{
+    "author": ["SinOfStrife"],
+    "name": "EmojiSteal",
+    "short": "Steal and upload custom emojis and stickers across servers and DMs.",
+    "description": "Steals custom emojis and stickers from messages—including forwarded messages—via replies or right-click context menus, and optionally uploads them to your server. Includes a user-installable context menu for stealing from DMs, group chats, and external servers (with a mutual-server upload picker), plus commands to fetch emoji URLs by ID and upload PNG/APNG stickers from mobile.",
+    "install_msg": "Thanks for installing EmojiSteal! Load it with `[p]load emojisteal`, then reply to a message with `[p]steal` / `[p]steal upload` or right-click a message (`Apps` ➔ `Steal Emotes` or `Steal+Upload Emotes`).\n\n**User App & Context Menu Setup:**\n1. In the **Discord Developer Portal** ➔ **Installation**, enable **Guild Install** and **User Install**, set *Install Link* to **Discord Provided Link**, and under *Default Install Settings* add the `bot` + `applications.commands` scopes (Guild) and `applications.commands` scope (User).\n2. Run `[p]slash enablecog emojisteal` then `[p]slash sync` **globally** (no server ID—required for User Apps), and refresh Discord (`Ctrl+R` / `Cmd+R`).\n3. Open that link ➔ **Add to My Apps** to use `Steal Emotes` in DMs, group chats, and external servers.\n*(Keep **Server Members Intent** enabled for staff DM uploads; servers disabling **Use External Apps** block user apps.)*",
+    "tags": ["emoji", "emojis", "sticker", "stickers", "utility", "user-apps"],
+    "min_bot_version": "3.5.17",
+    "hidden": false,
+    "disabled": false,
+    "type": "COG",
+    "end_user_data_statement": "This cog does not persistently store any end user data. When uploading a sticker with the uploadsticker command, the uploader's Discord username is included in the created sticker's description."
+}
